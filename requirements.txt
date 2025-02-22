@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+trio
+python-dotenv
+pydantic[dotenv]
+pydantic_settings
+python-multipart
+loguru
