@@ -1,7 +1,7 @@
 # **VSem Async File System**
 
 ### 🚀 Description  
-This project is an **asynchronous file system** based on **FastAPI** and **Trio**, with **API Key authentication**.
+This project is an **asynchronous file system** based on **FastAPI** and **Anyio**, with **API Key authentication**.
 
 ## 📦 Installation  
 ```bash
@@ -20,16 +20,16 @@ curl -X GET "http://localhost:8000/files/" -H "X-API-Key: my-ultra-secure-key"
 ```
 
 ## 🔥 Key Features:  
-- 📂 **Asynchronous file operations** using `trio`  
+- 📂 **Asynchronous file operations** using `anyio`  
 - 🔑 **API Key authentication**  
 - 📜 **Logging** via `loguru`  
 - 🛡 **Middleware** for request logging  
 
 ## 📄 API Endpoints:  
-| Method  | URL                 | Description         |
-|---------|---------------------|---------------------|
-| `POST`  | `/upload/`          | Upload a file      |
-| `GET`   | `/files/`           | List all files     |
+| Method  | URL                | Description         |
+|---------|--------------------|---------------------|
+| `POST`  | `/upload`          | Upload a file      |
+| `GET`   | `/files`           | List all files     |
 | `GET`   | `/files/{filename}` | Download a file    |
 | `DELETE`| `/files/{filename}` | Delete a file      |
 
