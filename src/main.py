@@ -1,9 +1,9 @@
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 
-from src.async_fs import AsyncFileManager
-from src.auth import get_api_key
-from src.logging_setup import setup_logging
-from src.middleware import trailing_slash_handler_middleware
+from auth import get_api_key
+from core.async_fs import AsyncFileManager
+from logging_setup import setup_logging
+from middleware import trailing_slash_handler_middleware
 
 # Initialize logging
 setup_logging()
@@ -29,8 +29,7 @@ async def upload_file(
     :param api_key: API key for authentication.
     :return: JSON response with the saved file path.
     """
-    content = await file.read()
-    file_path = await file_manager.write_file(file.filename, content)
+    file_path = await file_manager.write_file_stream(file.filename, file)
     return {"message": "✅ File saved successfully", "path": file_path}
 
 
