@@ -16,13 +16,10 @@ class Settings(BaseSettings):
     """
 
     API_KEY: str = os.getenv("API_KEY", "my-ultra-secure-key")
-    """API key used for authentication."""
-
     STORAGE_PATH: str = os.getenv("STORAGE_PATH", "./storage")
-    """Path where files are stored on the server."""
-
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
-    """Logging level (e.g., DEBUG, INFO, WARNING, ERROR)."""
+    MAX_FILE_SIZE_MB: int = int(os.getenv("MAX_FILE_SIZE_MB", 100))  # 100MB max
+
 
 # Initialize the settings object
 settings = Settings()
