@@ -34,7 +34,7 @@ class Settings(BaseSettings):
 
     CONTACT: dict[str, str] = {
         "name": "VSEM FMS",
-        "url": "https://wattfox.de",
+        "url": "https://bor2codelab.com",
         "email": "born2codelab@gmail.com",
     }
 
