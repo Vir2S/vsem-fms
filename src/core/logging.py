@@ -21,3 +21,6 @@ def setup_logging():
     before the application starts.
     """
     logger.info("Logging system initialized")
+
+
+__all__ = ["logger"]
