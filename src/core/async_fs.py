@@ -1,6 +1,5 @@
-import time
-
 import anyio
+import time
 from fastapi import UploadFile
 from loguru import logger
 
