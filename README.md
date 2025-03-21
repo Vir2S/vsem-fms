@@ -10,7 +10,7 @@ pip install -r requirements.txt
 
 ## 🚀 Running the Server  
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+python src/main.py
 ```
 
 ## 🔐 Using the API Key  
