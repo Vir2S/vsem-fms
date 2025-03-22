@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Response
 
 from core.auth import get_api_key
 from core.async_fs import AsyncFileManager
@@ -20,4 +20,9 @@ async def get_files_list(api_key: str = Depends(get_api_key)):
     """
     files = await file_manager.list_files()
     logger.info(f"Found {len(files)} files")
-    return {"files": files}
+    return Response(
+        {
+            "files": files
+        },
+        status_code=200,
+    )

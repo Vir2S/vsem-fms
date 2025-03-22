@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 
 from core.auth import get_api_key
 from core.async_fs import AsyncFileManager
@@ -23,7 +23,13 @@ async def get_file(filename: str, api_key: str = Depends(get_api_key)):
     try:
         content = await file_manager.read_file(filename)
         logger.info(f"File {filename} retrieved.")
-        return {"filename": filename, "content": content.decode()}
+        return Response(
+            {
+                "filename": filename,
+                "content": content.decode()
+            },
+            status_code=200,
+        )
 
     except FileNotFoundError:
         logger.error(f"File {filename} not found.")

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response
 
 from core.auth import get_api_key
 from core.async_fs import AsyncFileManager
@@ -27,6 +27,9 @@ async def delete_file(filename: str, api_key: str = Depends(get_api_key)):
         raise HTTPException(status_code=404, detail="❌ File not found")
 
     logger.info(f"File {filename} deleted.")
-    return {"message": "🗑️ File deleted successfully"}
-
-
+    return Response(
+        {
+            "message": "🗑️ File deleted successfully"
+        },
+        status_code=204,
+    )
