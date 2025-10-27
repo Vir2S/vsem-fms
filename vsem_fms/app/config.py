@@ -3,6 +3,7 @@ import os
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
 
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -27,7 +28,7 @@ class Settings(BaseSettings):
     DESCRIPTION: str = (
         "This server handles File Management System "
         "for any files. It allows upload, retrieve and delete "
-        "files via HTTP API."
+        "files via HTTP REST API."
     )
 
     VERSION: str = "1.0.0"
