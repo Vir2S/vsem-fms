@@ -230,8 +230,8 @@ class AsyncFileManager:
         Delete a file asynchronously if it exists.
 
         Args:
-            folder (str): User ID.
-            subfolder (str): Project ID.
+            folder (str): for example, User ID.
+            subfolder (str): for example, Project ID.
             filename (str): File name.
 
         Returns:
