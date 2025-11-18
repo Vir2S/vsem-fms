@@ -41,7 +41,7 @@ SERVER_PORT=5000
 Run the server locally:
 
 ```bash
-python src/main.py
+python app/main.py
 ```
 ---
 ## 🐳 Docker
