@@ -3,8 +3,7 @@ FROM python:${PYTHON_VER}-slim AS builder
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    build-essential gcc pkg-config \
-    mariadb-client && \
+    build-essential gcc pkg-config && \
     apt-get clean -y && apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*  && \
     python -m venv /opt/venv
@@ -23,7 +22,7 @@ ARG _GROUP=appgroup
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    mariadb-client curl && \
+    curl && \
     apt-get clean -y && apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/* && \
     groupadd ${_GROUP} && useradd --no-log-init -r --no-create-home -G ${_GROUP} ${_USER}
