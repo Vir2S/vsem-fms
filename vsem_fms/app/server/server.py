@@ -10,7 +10,7 @@ from vsem_fms.app.routes import delete, get_file, get_files_list, ping, upload
 
 
 class Server:
-    """Configure and run the FastAPI application."""
+    """Configure and run the FastAPI server."""
 
     def __init__(self) -> None:
         self.server = self.__create_server()
@@ -24,11 +24,11 @@ class Server:
             description=settings.DESCRIPTION,
             version=settings.VERSION,
             contact=settings.CONTACT,
-            license_info=settings.LICENSE_INFO,
+            license_info=settings.LICENCE_INFO,
         )
-        self._setup_middlewares(app=server)
-        self._register_routes(app=server)
-        logger.info(f"Server initialized: {settings.TITLE} v{settings.VERSION}")
+        self._setup_middlewares(server)
+        self._register_routes(server)
+        logger.info("Server initialized: {} {}", settings.TITLE, settings.VERSION)
         return server
 
     def _setup_middlewares(self, app: FastAPI) -> None:
@@ -36,19 +36,11 @@ class Server:
         app.middleware("http")(log_requests_middleware)
 
     def _register_routes(self, app: FastAPI) -> None:
-        for router in (
-            upload.router,
-            get_files_list.router,
-            get_file.router,
-            delete.router,
-            ping.router,
-        ):
+        for router in [upload.router, get_files_list.router, get_file.router, delete.router, ping.router]:
             app.include_router(router, prefix=ROOT_API)
 
-    def run_server(
-        self,
-        port: int = settings.SERVER_PORT,
-        host: str = settings.SERVER_HOST,
-    ) -> None:
-        logger.info(f"Starting server on http://{host}:{port}")
-        uvicorn.run(self.server, host=host, port=port)
+    def run_server(self, port: int | None = None, host: str | None = None) -> None:
+        server_port = port if port is not None else settings.SERVER_PORT
+        server_host = host if host is not None else settings.SERVER_HOST
+        logger.info("Starting server on http://{}:{}", server_host, server_port)
+        uvicorn.run(self.server, host=server_host, port=server_port)
