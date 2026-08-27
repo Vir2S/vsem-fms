@@ -1,46 +1,46 @@
-import os
-
-from dotenv import load_dotenv
-from pydantic_settings import BaseSettings
-
-
-# Load environment variables from .env file
-load_dotenv()
+from pydantic import AliasChoices, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """
-    Configuration settings for the application.
+    """Application settings loaded from environment variables and ``.env``."""
 
-    Environment variables are loaded using dotenv, allowing easy
-    customization without modifying the source code.
-    """
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
-    API_KEY: str = os.getenv("API_KEY", "my-ultra-secure-key")
-    STORAGE_PATH: str = os.getenv("STORAGE_PATH", "./storage")
-    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
-    MAX_FILE_SIZE_MB: int = int(os.getenv("MAX_FILE_SIZE_MB", 100))  # 100MB max
-    SERVER_PORT: str = os.getenv("SERVER_PORT", "5000")
-    SERVER_HOST: str = os.getenv("SERVER_HOST", "localhost")
+    API_KEY: str = "my-ultra-secure-key"
+    STORAGE_PATH: str = "./storage"
+    LOG_LEVEL: str = "INFO"
+    LOG_DIR: str = "./logs"
+    MAX_FILE_SIZE_MB: int = Field(
+        default=100,
+        validation_alias=AliasChoices("MAX_FILE_SIZE_MB", "MAX_FILE_SIZE"),
+    )
+    MAX_FILE_AGE_HOURS: int = 24
+    SERVER_PORT: int = 5000
+    SERVER_HOST: str = "0.0.0.0"
 
     TITLE: str = "VSEM FMS"
-
     DESCRIPTION: str = (
         "This server handles File Management System "
         "for any files. It allows upload, retrieve and delete "
         "files via HTTP REST API."
     )
-
-    VERSION: str = "1.0.0"
+    VERSION: str = "1.0.1"
 
     CONTACT: dict[str, str] = {
-        "name": "VSEM FMS",
-        "url": "https://bor2codelab.com",
+        "name": "Born2CodeLab",
+        "url": "https://born2codelab.com",
         "email": "born2codelab@gmail.com",
     }
+    LICENSE_INFO: dict[str, str] = {
+        "name": "MIT License",
+        "url": "https://opensource.org/licenses/MIT",
+    }
 
-    LICENCE_INFO: dict[str, str] = {"name": "MIT License", "url": "https://opensource.org/licenses/MIT"}
 
-
-# Initialize the settings object
 settings = Settings()

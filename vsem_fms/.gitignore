@@ -384,3 +384,6 @@ dmypy.json
 .pytype/
 cython_debug/
 /.idea/
+
+# VSEM FMS runtime data
+storage/

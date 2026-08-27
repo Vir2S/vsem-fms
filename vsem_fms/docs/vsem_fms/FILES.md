@@ -1,149 +1,100 @@
-# FILES API
+# Files API
 
-### Available Methods:
+Base API prefix: `/api/v1`.
 
-- ![POST](https://img.shields.io/badge/POST-%23FFFF00) `api/v1/files`
-- ![GET](https://img.shields.io/badge/GET-%2390EE90) `api/v1/files/{folder}/{subfolder}`
-- ![GET](https://img.shields.io/badge/GET-%2390EE90) `api/v1/files/{folder}/{subfolder}/{filename}`
-- ![DELETE](https://img.shields.io/badge/DELETE-%23FF0000) `api/v1/files/{folder}/{subfolder}/{filename}`
+All file endpoints require the `X-API-Key` header.
 
-### Security:
-- All endpoints require API key authentication.
+## Upload a file
 
----
+`POST /api/v1/files`
 
-## ![POST](https://img.shields.io/badge/POST-%23FFFF00) Upload a File
+Content type: `multipart/form-data`.
 
-**URL**: `POST api/v1/files`
+Fields:
 
-### Description:
-Upload a file to the server and save it to the specified folder and subfolder.
+- `folder` — required logical folder name.
+- `subfolder` — required logical subfolder name.
+- `overwrite` — optional boolean, defaults to `true`.
+- `file` — required uploaded file.
 
-### Request Schema: `UploadRequest`
-```json
-{
-  "folder": "project_data",
-  "subfolder": "2025_analytics",
-  "custom_file_name": "summary_report",
-  "overwrite": true
-}
+Example:
+
+```bash
+curl -X POST "http://localhost:5000/api/v1/files" \
+  -H "X-API-Key: change-me" \
+  -F "folder=project_data" \
+  -F "subfolder=2026_analytics" \
+  -F "overwrite=true" \
+  -F "file=@summary_report.txt"
 ```
 
-### Request:
-- **file**: Form-data file upload
-- **upload_request**: JSON body as shown above
+Successful response (`201 Created`):
 
-### Response Schema: `UploadResponse`
 ```json
 {
   "message": "File uploaded successfully.",
-  "path": "project_data/2025_analytics/summary_report.txt"
+  "path": "project_data/2026_analytics/summary_report.txt"
 }
 ```
 
-### Success:
-- **201 Created**: File uploaded successfully.
+Possible errors:
 
-### Errors:
-- **400 Bad Request**: File size exceeded or malformed request.
-- **409 Conflict**: File already exists and overwrite is not allowed.
-- **422 Validation Error**: Malformed JSON body or missing required fields.
-- **500 Internal Server Error**: File write error.
+- `400 Bad Request` — invalid filename or file exceeds the configured size limit.
+- `403 Forbidden` — missing or invalid API key.
+- `409 Conflict` — file exists and `overwrite=false`.
+- `422 Unprocessable Entity` — invalid form data.
+- `500 Internal Server Error` — storage write failure.
 
----
+## List files
 
-## ![GET](https://img.shields.io/badge/GET/{folder}/{subfolder}-%2390EE90) List Files
+`GET /api/v1/files/{folder}/{subfolder}`
 
-**URL**: `GET api/v1/files/{folder}/{subfolder}`
+Successful response (`200 OK`):
 
-### Description:
-Retrieve a list of files from the specified folder and subfolder.
-
-### Success:
 ```json
 {
   "files": [
-    "file1.txt",
-    "file2.csv",
-    "report_final.pdf"
+    "summary_report.txt",
+    "invoice.pdf"
   ]
 }
 ```
 
-- **200 OK**: Files listed successfully.
+The endpoint returns filenames only and does not expose physical hashed storage paths.
 
-### Errors:
-- **401 Unauthorized**
-- **403 Forbidden**
-- **404 Not Found**: Folder or subfolder not found.
+## Retrieve a file
 
----
+`GET /api/v1/files/{folder}/{subfolder}/{filename}`
 
-## ![GET](https://img.shields.io/badge/GET/{folder}/{subfolder}/{filename}-%2390EE90) Get File Content
+Text formats (`.txt`, `.csv`, `.md`, `.json`, `.xml`) are returned as JSON:
 
-**URL**: `GET api/v1/files/{folder}/{subfolder}/{filename}`
-
-### Description:
-Retrieve the content of a specific file.
-
-### Success:
 ```json
 {
-  "filename": "file1.txt",
-  "content": "This is the file content."
+  "filename": "summary_report.txt",
+  "content": "..."
 }
 ```
 
-- **200 OK**
+Supported binary formats are returned as attachments.
 
-### Errors:
-- **401 Unauthorized**
-- **403 Forbidden**
-- **404 Not Found**: File or folder not found.
+Possible errors:
 
----
+- `400 Bad Request` — invalid UTF-8 content for a supported text file.
+- `403 Forbidden` — missing or invalid API key.
+- `404 Not Found` — folder or file not found.
+- `415 Unsupported Media Type` — unsupported extension.
 
-## ![DELETE](https://img.shields.io/badge/DELETE/{folder}/{subfolder}/{filename}-%23FF0000) Delete a File
+## Delete a file
 
-**URL**: `DELETE api/v1/files/{folder}/{subfolder}/{filename}`
+`DELETE /api/v1/files/{folder}/{subfolder}/{filename}`
 
-### Description:
-Deletes a specified file from the folder/subfolder.
+Successful response: `204 No Content`.
 
-### Success:
-- **204 No Content**
+Possible errors:
 
-### Errors:
-- **401 Unauthorized**
-- **403 Forbidden**
-- **404 Not Found**: File not found.
+- `403 Forbidden` — missing or invalid API key.
+- `404 Not Found` — folder or file not found.
 
----
+## Legacy v1.0.0 files
 
-### Models
-
-#### UploadRequest
-```json
-{
-  "folder": "project_data",
-  "subfolder": "reports",
-  "custom_file_name": "report_v1",
-  "overwrite": true
-}
-```
-
-- `folder` *(str, required)*: The folder to upload the file.
-- `subfolder` *(str, required)*: The subfolder inside the folder.
-- `custom_file_name` *(str, optional)*: Optional custom name for the file.
-- `overwrite` *(bool, default=true)*: Whether to overwrite if file exists.
-
-#### UploadResponse
-```json
-{
-  "message": "File uploaded successfully.",
-  "path": "project_data/reports/report_v1.txt"
-}
-```
-
-- `message` *(str, optional)*: Upload confirmation message.
-- `path` *(str, required)*: Path to the uploaded file.
+Version 1.0.0 stored filenames as SHA-256 hashes. v1.0.1 keeps backward-compatible lookup, so existing files remain retrievable/deletable by supplying their original filename. A successful overwrite migrates the file to the current filename format.
