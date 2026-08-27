@@ -1,15 +1,14 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-echo "Starting Storage Service…"
+echo "Starting VSEM FMS…"
 
-if [ -n "${LOG_DIR}" ]; then
-  mkdir -p "${LOG_DIR}"
-  chown -R appuser:appgroup "${LOG_DIR}"
-fi
+STORAGE_PATH="${STORAGE_PATH:-./storage}"
+LOG_DIR="${LOG_DIR:-./logs}"
+SERVER_PORT="${SERVER_PORT:-5000}"
 
-echo "Ensure storage directory exists at ${STORAGE_PATH}"
-mkdir -p "/app/${STORAGE_PATH#./}"
-chown -R appuser:appgroup "/app/${STORAGE_PATH#./}"
+mkdir -p "${STORAGE_PATH}" "${LOG_DIR}"
+chown -R appuser:appgroup "${STORAGE_PATH}" "${LOG_DIR}"
 
-exec su -c "uvicorn app.main:app --host 0.0.0.0 --port ${EXPOSE_PORT} --reload" appuser
+exec su -s /bin/sh appuser -c \
+  "uvicorn vsem_fms.app.main:app --host 0.0.0.0 --port ${SERVER_PORT}"

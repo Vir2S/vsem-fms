@@ -8,6 +8,7 @@ from vsem_fms.app.exceptions.file_exceptions import (
     FileAlreadyExistsError,
     FileSizeError,
     FileWriteError,
+    InvalidFileNameError,
 )
 from vsem_fms.app.schemas.upload_schemas import UploadRequest, UploadResponse
 from vsem_fms.app.services.file_service import FileService
@@ -50,7 +51,7 @@ async def upload_model(
         HTTPException: If any errors occur during the upload process, such as:
             - 409 Conflict: If the file already exists and cannot be overwritten.
             - 400 Bad Request: If the file size exceeds the allowed limit.
-            - 500 Internal Server Error: For other file-related errors such as writing to storage or file upload errors.
+            - 500 Internal Server Error: For storage write failures or other internal upload errors.
     """
     try:
         saved_path = await file_service.upload_file(file=file, upload_data=upload_request)
@@ -66,6 +67,10 @@ async def upload_model(
 
     except FileSizeError as e:
         logger.warning(f"Upload failed: file size error '{file.filename}'")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=e.detail)
+
+    except InvalidFileNameError as e:
+        logger.warning(f"Upload failed: invalid filename '{file.filename}'")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=e.detail)
 
     except FileWriteError as e:

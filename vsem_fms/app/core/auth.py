@@ -1,3 +1,4 @@
+import secrets
 from fastapi import HTTPException, Security, status
 from fastapi.security.api_key import APIKeyHeader
 from loguru import logger
@@ -12,7 +13,7 @@ API_KEY_NAME = "X-API-Key"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=True)
 
 
-async def get_api_key(api_key: str = Security(api_key_header)):
+async def get_api_key(api_key: str = Security(api_key_header)) -> str:
     """
     Validate the API key provided in the request header.
 
@@ -25,7 +26,7 @@ async def get_api_key(api_key: str = Security(api_key_header)):
     Raises:
         HTTPException: If the API key is missing or invalid, a 403 Forbidden error is raised.
     """
-    if api_key != settings.API_KEY:
+    if not secrets.compare_digest(api_key, settings.API_KEY):
         logger.warning("❌ Invalid API Key attempt.")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
