@@ -1,6 +1,6 @@
 # Files API
 
-Base API prefix: `/api/v1`.
+Base path: `/api/v1`
 
 All file endpoints require the `X-API-Key` header.
 
@@ -8,93 +8,88 @@ All file endpoints require the `X-API-Key` header.
 
 `POST /api/v1/files`
 
-Content type: `multipart/form-data`.
+Multipart form fields:
 
-Fields:
-
-- `folder` — required logical folder name.
-- `subfolder` — required logical subfolder name.
-- `overwrite` — optional boolean, defaults to `true`.
-- `file` — required uploaded file.
+- `file`: required file upload
+- `folder`: required logical parent folder
+- `subfolder`: required logical subfolder
+- `overwrite`: optional boolean, defaults to `true`
 
 Example:
 
 ```bash
-curl -X POST "http://localhost:5000/api/v1/files" \
-  -H "X-API-Key: change-me" \
+curl -X POST http://localhost:5000/api/v1/files \
+  -H "X-API-Key: replace-with-a-long-random-secret" \
   -F "folder=project_data" \
   -F "subfolder=2026_analytics" \
   -F "overwrite=true" \
-  -F "file=@summary_report.txt"
+  -F "file=@report.pdf"
 ```
 
-Successful response (`201 Created`):
+Success: `201 Created`
 
 ```json
 {
   "message": "File uploaded successfully.",
-  "path": "project_data/2026_analytics/summary_report.txt"
+  "path": "project_data/2026_analytics/report.pdf"
 }
 ```
 
-Possible errors:
+Errors:
 
-- `400 Bad Request` — invalid filename or file exceeds the configured size limit.
-- `403 Forbidden` — missing or invalid API key.
-- `409 Conflict` — file exists and `overwrite=false`.
-- `422 Unprocessable Entity` — invalid form data.
-- `500 Internal Server Error` — storage write failure.
+- `400 Bad Request`: invalid filename or file exceeds `MAX_FILE_SIZE_MB`
+- `409 Conflict`: file exists and `overwrite=false`
+- `422 Unprocessable Entity`: missing or invalid form fields
+- `500 Internal Server Error`: storage write failure
+
+Uploads use temp files plus an atomic commit. If validation fails while overwriting an existing file, the existing file remains untouched.
 
 ## List files
 
 `GET /api/v1/files/{folder}/{subfolder}`
 
-Successful response (`200 OK`):
+Success: `200 OK`
 
 ```json
 {
   "files": [
-    "summary_report.txt",
-    "invoice.pdf"
+    "file1.txt",
+    "report.pdf"
   ]
 }
 ```
 
-The endpoint returns filenames only and does not expose physical hashed storage paths.
+Only logical filenames are returned; absolute storage paths are never exposed.
 
 ## Retrieve a file
 
 `GET /api/v1/files/{folder}/{subfolder}/{filename}`
 
-Text formats (`.txt`, `.csv`, `.md`, `.json`, `.xml`) are returned as JSON:
+For UTF-8 `.txt`, `.csv`, `.md`, `.json`, and `.xml` files the response is JSON:
 
 ```json
 {
-  "filename": "summary_report.txt",
-  "content": "..."
+  "filename": "file1.txt",
+  "content": "This is the file content."
 }
 ```
 
-Supported binary formats are returned as attachments.
+All other file types are streamed directly from disk. Unknown extensions fall back to `application/octet-stream` when a MIME type cannot be inferred.
 
-Possible errors:
+Errors:
 
-- `400 Bad Request` — invalid UTF-8 content for a supported text file.
-- `403 Forbidden` — missing or invalid API key.
-- `404 Not Found` — folder or file not found.
-- `415 Unsupported Media Type` — unsupported extension.
+- `400 Bad Request`: invalid filename or invalid UTF-8 for an inline text file
+- `404 Not Found`: file or folder not found
 
 ## Delete a file
 
 `DELETE /api/v1/files/{folder}/{subfolder}/{filename}`
 
-Successful response: `204 No Content`.
+Success: `204 No Content`
 
-Possible errors:
+Deletion accepts the original logical filename. It also supports files written by v1.0.0 using the previous hashed-filename storage scheme.
 
-- `403 Forbidden` — missing or invalid API key.
-- `404 Not Found` — folder or file not found.
+Errors:
 
-## Legacy v1.0.0 files
-
-Version 1.0.0 stored filenames as SHA-256 hashes. v1.0.1 keeps backward-compatible lookup, so existing files remain retrievable/deletable by supplying their original filename. A successful overwrite migrates the file to the current filename format.
+- `400 Bad Request`: invalid filename
+- `404 Not Found`: file or folder not found

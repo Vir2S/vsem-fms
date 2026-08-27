@@ -1,11 +1,12 @@
 # VSEM FMS
 
-VSEM FMS is a small asynchronous file-management API built with FastAPI and AnyIO. It supports authenticated upload, listing, retrieval, and deletion of files stored under logical `folder/subfolder` namespaces.
+VSEM FMS is an asynchronous file management service built with FastAPI and AnyIO. It provides API-key protected upload, listing, retrieval, and deletion of files while keeping logical folder identifiers separate from the internal storage layout.
 
 ## Requirements
 
 - Python 3.11+
-- An API key configured through environment variables
+- pip
+- Docker is optional
 
 ## Local setup
 
@@ -18,57 +19,61 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Edit `.env` before running the service. At minimum, replace the example API key.
+Set a strong API key in `.env` before starting the service. `API_KEY` has no default and the application intentionally refuses to start when it is missing or too short.
 
-```dotenv
-API_KEY=change-me
+```env
+API_KEY=replace-with-a-long-random-secret
 STORAGE_PATH=./storage
 MAX_FILE_SIZE_MB=100
-MAX_FILE_AGE_HOURS=24
+MAX_FILE_AGE_HOURS=168
 LOG_LEVEL=INFO
 LOG_DIR=./logs
 SERVER_HOST=0.0.0.0
 SERVER_PORT=5000
 ```
 
-Start the API:
+`MAX_FILE_SIZE` is still accepted as a backward-compatible alias for `MAX_FILE_SIZE_MB` when upgrading from v1.0.0.
+
+Start the application:
 
 ```bash
 python -m vsem_fms.app.main
 ```
 
-Swagger UI is available at:
+Alternatively:
 
-```text
-http://localhost:5000/api/v1/docs
+```bash
+uvicorn vsem_fms.app.main:app --host 0.0.0.0 --port 5000
 ```
 
-## Authentication
+OpenAPI documentation is available at `http://localhost:5000/api/v1/docs`.
+
+## API authentication
 
 Protected endpoints require the `X-API-Key` header:
 
 ```bash
--H "X-API-Key: change-me"
+curl -H "X-API-Key: replace-with-a-long-random-secret" \
+  http://localhost:5000/api/v1/files/user-1/project-1
 ```
 
-## API
+The `/api/v1/ping` health endpoint is public.
+
+## File API
 
 | Method | Endpoint | Description |
-|---|---|---|
-| `POST` | `/api/v1/files` | Upload a file |
-| `GET` | `/api/v1/files/{folder}/{subfolder}` | List filenames |
+| --- | --- | --- |
+| `POST` | `/api/v1/files` | Upload a file using multipart form data |
+| `GET` | `/api/v1/files/{folder}/{subfolder}` | List logical filenames |
 | `GET` | `/api/v1/files/{folder}/{subfolder}/{filename}` | Retrieve a file |
 | `DELETE` | `/api/v1/files/{folder}/{subfolder}/{filename}` | Delete a file |
-| `GET` | `/api/v1/ping` | Health check |
 
-### Upload example
-
-The upload endpoint accepts `multipart/form-data`.
+### Upload
 
 ```bash
-curl -X POST "http://localhost:5000/api/v1/files" \
-  -H "X-API-Key: change-me" \
-  -F "folder=customer-1" \
+curl -X POST http://localhost:5000/api/v1/files \
+  -H "X-API-Key: replace-with-a-long-random-secret" \
+  -F "folder=user-1" \
   -F "subfolder=project-1" \
   -F "overwrite=true" \
   -F "file=@example.txt"
@@ -79,30 +84,21 @@ Example response:
 ```json
 {
   "message": "File uploaded successfully.",
-  "path": "customer-1/project-1/example.txt"
+  "path": "user-1/project-1/example.txt"
 }
 ```
 
-### List files
+The response contains a logical path only. Internal filesystem paths are never returned by the API.
 
-```bash
-curl "http://localhost:5000/api/v1/files/customer-1/project-1" \
-  -H "X-API-Key: change-me"
-```
+### Retrieval behavior
 
-```json
-{
-  "files": ["example.txt"]
-}
-```
+UTF-8 files with `.txt`, `.csv`, `.md`, `.json`, or `.xml` extensions are returned as JSON containing `filename` and `content`. All other extensions are streamed from disk as downloads. Unknown extensions use `application/octet-stream` when no MIME type can be inferred.
 
-## Storage behavior
+### Storage behavior
 
-Folder and subfolder names are hashed on disk, so the physical storage layout does not expose those logical identifiers. Starting with v1.0.1, public filenames are preserved inside those hashed directories, which keeps upload/list/get/delete behavior consistent.
+Folder and subfolder identifiers are hashed internally. Starting with v1.0.1, filenames are stored using their validated original names so listing can return meaningful logical filenames. Read and delete operations remain compatible with hashed filenames created by v1.0.0.
 
-Files created by v1.0.0 with hashed filenames remain readable and deletable when the original filename is supplied. Overwriting such a file migrates it to the v1.0.1 filename format.
-
-Uploads are first written to a temporary file and atomically moved into place only after size validation succeeds. A failed oversized overwrite therefore does not destroy the previous valid file.
+Uploads are first written to a temporary file and committed atomically only after size validation succeeds. A failed overwrite therefore does not destroy the previous valid file.
 
 ## Docker
 
@@ -112,27 +108,30 @@ Build from the repository root:
 docker build -f vsem_fms/Dockerfile -t vsem-fms .
 ```
 
-Run with the environment file:
+Run:
 
 ```bash
-docker run --rm \
-  -p 5000:5000 \
-  --env-file .env \
+docker run --rm -p 5000:5000 \
+  -e API_KEY='replace-with-a-long-random-secret' \
+  -e SERVER_HOST=0.0.0.0 \
+  -e SERVER_PORT=5000 \
   -v "$(pwd)/storage:/app/storage" \
-  -v "$(pwd)/logs:/app/logs" \
   vsem-fms
 ```
 
-The container listens on port `5000` by default. `SERVER_PORT` can be changed through the environment.
+The production entrypoint does not enable Uvicorn reload mode.
 
 ## Tests
 
+Install development dependencies and run the suite:
+
 ```bash
-python -m unittest discover -s tests -v
+pip install -r requirements-dev.txt
+pytest -q
 ```
 
-## License
+The test suite covers the complete upload/list/get/delete flow, failed overwrite data preservation, `overwrite=false`, arbitrary binary downloads, legacy hashed-file compatibility, API-key rejection, old-file cleanup, route-safe folder validation, and legacy configuration compatibility.
 
-MIT License.
+## Author
 
-**Author:** Born2CodeLab / Vitaly Sem
+Born2CodeLab / Vitaly Sem

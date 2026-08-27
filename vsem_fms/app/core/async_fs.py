@@ -1,30 +1,25 @@
 import hashlib
 import os
 import time
+import uuid
 from typing import Any
-from uuid import uuid4
 
 from anyio import Path as AsyncPath
-from anyio import open_file
+from anyio import open_file, to_thread
 from fastapi import UploadFile
 from loguru import logger
 
 from vsem_fms.app.config import settings
-from vsem_fms.app.exceptions.file_exceptions import (
-    FileSizeError,
-    FolderNotFoundError,
-    InvalidFileNameError,
-)
+from vsem_fms.app.exceptions.file_exceptions import FileSizeError, FolderNotFoundError
 
 
 class AsyncFileManager:
-    """Asynchronous file manager backed by AnyIO filesystem primitives."""
+    """Asynchronous filesystem operations for VSEM FMS."""
 
     def __init__(self) -> None:
         self.base_dir = AsyncPath(settings.STORAGE_PATH)
 
     def _hash_value(self, value: Any) -> str:
-        """Return a deterministic SHA-256 identifier for a value."""
         return hashlib.sha256(str(value).encode()).hexdigest()
 
     def _get_hashed_path(
@@ -33,88 +28,91 @@ class AsyncFileManager:
         subfolder: str,
         filename: str | None = None,
     ) -> AsyncPath:
-        """Build the physical path for a logical folder/subfolder pair."""
+        """Build the internal hashed folder/subfolder path."""
         folder_hash = self._hash_value(folder)
         subfolder_hash = self._hash_value(subfolder)
-        directory = self.base_dir / folder_hash / subfolder_hash
-        return directory / filename if filename else directory
+        path = self.base_dir / folder_hash / subfolder_hash
+        return path / filename if filename else path
 
-    def _validate_filename(self, filename: str | None) -> str:
-        """Reject empty names and path traversal while preserving the API filename."""
-        if (
-            not filename
-            or filename in {".", ".."}
-            or "/" in filename
-            or "\\" in filename
-            or "\x00" in filename
-        ):
-            raise InvalidFileNameError()
-        return filename
-
-    def _get_legacy_hashed_filename(self, original_filename: str) -> str:
-        """Return the filename format used by v1.0.0 for backwards compatibility."""
+    def _get_hashed_filename(self, original_filename: str) -> str:
+        """Return the legacy v1.0.0 hashed filename for backward compatibility."""
         extension = os.path.splitext(original_filename)[1]
         return f"{self._hash_value(original_filename)}{extension}"
 
+    def _validate_filename(self, filename: str | None) -> str:
+        """Reject empty or path-like filenames before using them on disk."""
+        if not filename or filename in {".", ".."} or "/" in filename or "\\" in filename or "\x00" in filename:
+            raise ValueError("Invalid filename")
+        return filename
+
+    def _file_candidates(self, folder: str, subfolder: str, filename: str) -> tuple[AsyncPath, AsyncPath]:
+        """Return the current and legacy storage paths for a logical filename."""
+        safe_filename = self._validate_filename(filename)
+        current = self._get_hashed_path(folder, subfolder, safe_filename)
+        legacy = self._get_hashed_path(folder, subfolder, self._get_hashed_filename(safe_filename))
+        return current, legacy
+
     async def _ensure_dir(self, path: AsyncPath) -> None:
-        if not await path.exists():
-            await path.mkdir(parents=True, exist_ok=True)
-            logger.info(f"📁 Created directory: {path}")
+        """Create a directory safely when concurrent requests race to create it."""
+        await path.mkdir(parents=True, exist_ok=True)
 
     async def _check_dir_exists(self, path: AsyncPath, folder: str, subfolder: str) -> None:
         if not await path.exists():
-            logger.warning(f"📂 Directory not found: folder='{folder}', subfolder='{subfolder}'")
+            logger.warning("Directory not found: folder='{}', subfolder='{}'", folder, subfolder)
             raise FolderNotFoundError(folder=folder, subfolder=subfolder)
 
-    async def _resolve_existing_file_path(
-        self,
-        folder: str,
-        subfolder: str,
-        filename: str,
-    ) -> AsyncPath:
-        """Resolve current filenames first and v1.0.0 hashed filenames second."""
-        safe_filename = self._validate_filename(filename)
-        directory = self._get_hashed_path(folder=folder, subfolder=subfolder)
-        await self._check_dir_exists(path=directory, folder=folder, subfolder=subfolder)
+    async def _check_file_exists(self, file_path: AsyncPath, filename: str) -> None:
+        if not await file_path.exists():
+            logger.warning("File not found: '{}'", filename)
+            raise FileNotFoundError(f"File {filename} not found")
 
-        current_path = directory / safe_filename
-        if await current_path.is_file():
-            return current_path
+    async def _resolve_file_path(self, folder: str, subfolder: str, filename: str) -> AsyncPath:
+        """Resolve a logical filename, including legacy v1.0.0 hashed storage."""
+        current, legacy = self._file_candidates(folder, subfolder, filename)
+        await self._check_dir_exists(current.parent, folder, subfolder)
 
-        legacy_path = directory / self._get_legacy_hashed_filename(safe_filename)
-        if await legacy_path.is_file():
-            return legacy_path
+        if await current.exists():
+            return current
+        if await legacy.exists():
+            return legacy
 
-        logger.warning(f"❌ File not found: '{safe_filename}' at {directory}")
-        raise FileNotFoundError(f"File {safe_filename} not found in {directory}")
+        raise FileNotFoundError(f"File {filename} not found")
 
-    async def _write_file_stream(self, file: UploadFile, save_path: AsyncPath) -> int:
-        """Write an upload to a temporary file and atomically replace the target."""
-        await self._ensure_dir(save_path.parent)
+    async def _write_file_stream(self, file: UploadFile, directory: AsyncPath) -> AsyncPath:
+        """Write upload data to a temporary file and enforce the size limit."""
+        await self._ensure_dir(directory)
 
         max_size = settings.MAX_FILE_SIZE_MB * 1024 * 1024
         total_size = 0
-        temp_path = save_path.parent / f".{save_path.name}.{uuid4().hex}.tmp"
+        temp_path = directory / f".upload-{uuid.uuid4().hex}.tmp"
 
         try:
-            async with await open_file(temp_path, "wb") as dest_file:
+            async with await open_file(temp_path, "xb") as dest_file:
                 while chunk := await file.read(1024 * 1024):
                     total_size += len(chunk)
                     if total_size > max_size:
-                        logger.error(
-                            f"❌ File too large: {total_size} bytes > {max_size} bytes — {save_path.name}"
-                        )
                         raise FileSizeError(size=total_size, limit=max_size)
                     await dest_file.write(chunk)
-
-            await temp_path.replace(save_path)
-        except Exception:
+        except BaseException:
             if await temp_path.exists():
                 await temp_path.unlink()
             raise
 
-        logger.info(f"✅ File saved successfully: {save_path.name}, size={total_size} bytes")
-        return total_size
+        return temp_path
+
+    async def _commit_temp_file(self, temp_path: AsyncPath, final_path: AsyncPath, overwrite: bool) -> None:
+        """Atomically commit a complete temp file to its final location."""
+        if overwrite:
+            await to_thread.run_sync(os.replace, str(temp_path), str(final_path))
+            return
+
+        try:
+            await to_thread.run_sync(os.link, str(temp_path), str(final_path))
+        except FileExistsError:
+            raise
+        finally:
+            if await temp_path.exists():
+                await temp_path.unlink()
 
     async def save_file(
         self,
@@ -124,76 +122,71 @@ class AsyncFileManager:
         *,
         overwrite: bool = True,
     ) -> AsyncPath:
-        """Save an uploaded file while preserving its public filename."""
+        """Save a file using temp-write + atomic commit semantics."""
         filename = self._validate_filename(file.filename)
-        directory = self._get_hashed_path(folder=folder, subfolder=subfolder)
-        full_path = directory / filename
-        legacy_path = directory / self._get_legacy_hashed_filename(filename)
+        final_path, legacy_path = self._file_candidates(folder, subfolder, filename)
+        await self._ensure_dir(final_path.parent)
 
-        await self._ensure_dir(path=directory)
+        if not overwrite and (await final_path.exists() or await legacy_path.exists()):
+            raise FileExistsError(f"File {filename} already exists")
 
-        current_exists = await full_path.exists()
-        legacy_exists = await legacy_path.exists()
-        if not overwrite and (current_exists or legacy_exists):
-            logger.warning(f"⚠️ File already exists and overwrite is False: {filename}")
-            raise FileExistsError(f"File {filename} already exists.")
+        temp_path = await self._write_file_stream(file=file, directory=final_path.parent)
 
         try:
-            await self._write_file_stream(file=file, save_path=full_path)
-        except OSError:
-            logger.exception(
-                f"❌ Failed to save file {filename} in folder={folder}, subfolder={subfolder}"
-            )
+            await self._commit_temp_file(temp_path=temp_path, final_path=final_path, overwrite=overwrite)
+        except BaseException:
+            if await temp_path.exists():
+                await temp_path.unlink()
             raise
 
-        if legacy_exists and legacy_path != full_path and await legacy_path.exists():
-            try:
-                await legacy_path.unlink()
-                logger.info(f"Migrated legacy stored filename for '{filename}'")
-            except OSError:
-                logger.warning(f"Could not remove legacy duplicate for '{filename}'")
+        if legacy_path != final_path and await legacy_path.exists():
+            await legacy_path.unlink()
 
-        return full_path
+        logger.info("File saved successfully: '{}'", filename)
+        return final_path
+
+    async def get_file_path(self, folder: str, subfolder: str, filename: str) -> AsyncPath:
+        """Return the internal path for a logical file after existence checks."""
+        return await self._resolve_file_path(folder=folder, subfolder=subfolder, filename=filename)
 
     async def read_file(self, folder: str, subfolder: str, filename: str) -> bytes:
-        """Read a file by its public filename, including legacy v1.0.0 storage."""
-        file_path = await self._resolve_existing_file_path(
-            folder=folder,
-            subfolder=subfolder,
-            filename=filename,
-        )
+        """Read a file into memory. Used only for inline text responses."""
+        file_path = await self._resolve_file_path(folder=folder, subfolder=subfolder, filename=filename)
+        async with await open_file(file_path, "rb") as file_obj:
+            return await file_obj.read()
 
-        async with await open_file(file_path, "rb") as file_handle:
-            content = await file_handle.read()
+    async def delete_file(self, folder: str, subfolder: str, filename: str) -> bool:
+        """Delete a logical file, supporting both current and legacy storage names."""
+        current, legacy = self._file_candidates(folder, subfolder, filename)
+        await self._check_dir_exists(current.parent, folder, subfolder)
 
-        logger.info(f"File {filename} read successfully")
-        return content
+        deleted = False
+        for file_path in {current, legacy}:
+            if await file_path.exists():
+                await file_path.unlink()
+                deleted = True
 
-    async def delete_file(self, folder: str, subfolder: str, filename: str) -> None:
-        """Delete a file by the same public filename used by GET and POST."""
-        file_path = await self._resolve_existing_file_path(
-            folder=folder,
-            subfolder=subfolder,
-            filename=filename,
-        )
-        await file_path.unlink()
-        logger.info(f"🗑️ File deleted: {file_path}")
+        if not deleted:
+            raise FileNotFoundError(f"File {filename} not found")
+
+        logger.info("File deleted: '{}/{}/{}'", folder, subfolder, filename)
+        return True
 
     async def list_files(self, folder: str, subfolder: str) -> list[str]:
-        """List filenames only, without leaking physical storage paths."""
+        """List logical filenames without exposing absolute server paths."""
         target_dir = self._get_hashed_path(folder=folder, subfolder=subfolder)
-        await self._check_dir_exists(path=target_dir, folder=folder, subfolder=subfolder)
+        await self._check_dir_exists(target_dir, folder, subfolder)
 
-        files = [
-            entry.name
-            async for entry in target_dir.iterdir()
-            if await entry.is_file() and not entry.name.endswith(".tmp")
-        ]
+        files: list[str] = []
+        async for file_path in target_dir.iterdir():
+            if await file_path.is_file() and not file_path.name.startswith(".upload-"):
+                files.append(file_path.name)
+
         return sorted(files)
 
     async def cleanup_old_files(self) -> None:
-        """Delete files older than ``MAX_FILE_AGE_HOURS`` recursively."""
-        await self._ensure_dir(path=self.base_dir)
+        """Delete files older than MAX_FILE_AGE_HOURS recursively."""
+        await self._ensure_dir(self.base_dir)
         now = time.time()
 
         async for file_path in self.base_dir.rglob("*"):
@@ -202,6 +195,4 @@ class AsyncFileManager:
                 age_hours = (now - modified_time) / 3600
                 if age_hours > settings.MAX_FILE_AGE_HOURS:
                     await file_path.unlink()
-                    logger.info(f"🗑️ Deleted old file: {file_path}")
-
-        logger.info("✅ Cleanup of old files completed.")
+                    logger.info("Deleted old file: {}", file_path)
