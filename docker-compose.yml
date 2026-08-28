@@ -1,0 +1,23 @@
+services:
+  vsem-fms:
+    build:
+      context: .
+      dockerfile: vsem_fms/Dockerfile
+      args:
+        PYTHON_VER: "3.11"
+    image: vsem-fms:1.0.2
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    environment:
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: ${SERVER_PORT:-5000}
+      STORAGE_PATH: /app/storage
+      LOG_DIR: /app/logs
+    ports:
+      - "${SERVER_PORT:-5000}:${SERVER_PORT:-5000}"
+    volumes:
+      - ./storage:/app/storage
+      - ./logs:/app/logs
+    stop_grace_period: 15s
