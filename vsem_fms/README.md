@@ -100,6 +100,36 @@ Folder and subfolder identifiers are hashed internally. Starting with v1.0.1, fi
 
 Uploads are first written to a temporary file and committed atomically only after size validation succeeds. A failed overwrite therefore does not destroy the previous valid file.
 
+## Docker Compose
+
+Create the runtime environment file and set a strong API key:
+
+```bash
+cp .env.example .env
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+Put the generated value into `API_KEY` in `.env`, then start the service from the repository root:
+
+```bash
+docker compose up -d --build
+```
+
+Check status and logs:
+
+```bash
+docker compose ps
+docker compose logs -f vsem-fms
+```
+
+Persistent files and logs are bind-mounted to `./storage` and `./logs`. The image health check uses `/api/v1/ping`, and the service restarts automatically unless it is explicitly stopped.
+
+Stop the service:
+
+```bash
+docker compose down
+```
+
 ## Docker
 
 Build from the repository root:

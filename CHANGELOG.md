@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.0.2] - 2026-08-28
+
+### Added
+
+- Added root-level `docker-compose.yml` for one-command build and startup with `.env` loading, persistent storage/log bind mounts, automatic restart policy, init handling, and graceful shutdown.
+- Added a root `.dockerignore` to keep secrets, runtime data, caches, local environments, and other unnecessary files out of the Docker build context.
+- Ignored Docker Compose runtime `storage/` and `logs/` directories from Git.
+- Added Docker Compose setup, status, logs, and shutdown instructions to the README.
+
+### Changed
+
+- Version bumped to `1.0.2`.
+
 ## [1.0.1] - 2026-08-27
 
 ### Fixed
