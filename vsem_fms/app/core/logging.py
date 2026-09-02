@@ -11,12 +11,13 @@ _logging_configured = False
 _TEXT_FORMAT = (
     "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
     "<level>{level: <8}</level> | "
-    "request_id={extra[request_id]} | "
+    "request_id={extra[request_id]} | api_client_id={extra[api_client_id]} | "
     "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
     "<level>{message}</level>"
 )
 _FILE_TEXT_FORMAT = (
     "{time:YYYY-MM-DD HH:mm:ss} | {level} | request_id={extra[request_id]} | "
+    "api_client_id={extra[api_client_id]} | "
     "{name}:{function}:{line} - {message}"
 )
 
@@ -34,7 +35,7 @@ def setup_logging() -> None:
     serialize = settings.LOG_FORMAT == "json"
 
     logger.remove()
-    logger.configure(extra={"request_id": "-"})
+    logger.configure(extra={"request_id": "-", "api_client_id": "-"})
     logger.add(
         sys.stdout,
         level=log_level,

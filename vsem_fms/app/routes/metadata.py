@@ -4,7 +4,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
-from vsem_fms.app.core.auth import get_api_key
+from vsem_fms.app.core.api_keys import APIPrincipal, APIScope
+from vsem_fms.app.core.auth import authorize_folder_access, require_scope
 from vsem_fms.app.core.pagination import MAX_PAGE_SIZE
 from vsem_fms.app.exceptions.file_exceptions import (
     FileNotFound,
@@ -34,14 +35,18 @@ def _metadata_headers(metadata: dict[str, object]) -> dict[str, str]:
 @router.get(
     "/{folder}/{subfolder}/metadata",
     response_model=FileMetadataPage | FileMetadataList,
-    dependencies=[Depends(get_api_key)],
     summary="List file metadata",
     description=(
         "Retrieve size, content type, modification time, and SHA-256 for files in a folder. "
         "Supplying limit or cursor enables cursor pagination."
     ),
+    responses={
+        401: {"description": "Unauthorized"},
+        403: {"description": "Forbidden"},
+    },
 )
 async def list_metadata(
+    principal: Annotated[APIPrincipal, Depends(require_scope(APIScope.FILES_LIST))],
     file_service: Annotated[FileService, Depends(FileService)],
     folder: str,
     subfolder: str,
@@ -54,6 +59,7 @@ async def list_metadata(
         Query(min_length=1, max_length=2048, description="Opaque cursor returned by the previous page."),
     ] = None,
 ) -> FileMetadataPage | FileMetadataList:
+    authorize_folder_access(principal, APIScope.FILES_LIST, folder=folder, subfolder=subfolder)
     try:
         if limit is None and cursor is None:
             files = await file_service.list_file_metadata(folder=folder, subfolder=subfolder)
@@ -79,16 +85,21 @@ async def list_metadata(
 @router.get(
     "/{folder}/{subfolder}/{filename}/metadata",
     response_model=FileMetadata,
-    dependencies=[Depends(get_api_key)],
     summary="Get file metadata",
     description="Retrieve size, content type, modification time, and SHA-256 for a file.",
+    responses={
+        401: {"description": "Unauthorized"},
+        403: {"description": "Forbidden"},
+    },
 )
 async def get_metadata(
+    principal: Annotated[APIPrincipal, Depends(require_scope(APIScope.FILES_READ))],
     file_service: Annotated[FileService, Depends(FileService)],
     folder: str,
     subfolder: str,
     filename: str,
 ) -> FileMetadata:
+    authorize_folder_access(principal, APIScope.FILES_READ, folder=folder, subfolder=subfolder)
     try:
         metadata = await file_service.get_file_metadata(folder=folder, subfolder=subfolder, filename=filename)
         return FileMetadata.model_validate(metadata)
@@ -100,16 +111,21 @@ async def get_metadata(
 
 @router.head(
     "/{folder}/{subfolder}/{filename}",
-    dependencies=[Depends(get_api_key)],
     summary="Get file headers",
     description="Retrieve file metadata as HTTP headers without returning the file body.",
+    responses={
+        401: {"description": "Unauthorized"},
+        403: {"description": "Forbidden"},
+    },
 )
 async def head_file(
+    principal: Annotated[APIPrincipal, Depends(require_scope(APIScope.FILES_READ))],
     file_service: Annotated[FileService, Depends(FileService)],
     folder: str,
     subfolder: str,
     filename: str,
 ) -> Response:
+    authorize_folder_access(principal, APIScope.FILES_READ, folder=folder, subfolder=subfolder)
     try:
         metadata = await file_service.get_file_metadata(folder=folder, subfolder=subfolder, filename=filename)
         return Response(status_code=status.HTTP_200_OK, headers=_metadata_headers(metadata))

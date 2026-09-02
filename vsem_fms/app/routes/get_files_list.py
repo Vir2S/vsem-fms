@@ -2,7 +2,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from loguru import logger
-from vsem_fms.app.core.auth import get_api_key
+from vsem_fms.app.core.api_keys import APIPrincipal, APIScope
+from vsem_fms.app.core.auth import authorize_folder_access, require_scope
 from vsem_fms.app.core.pagination import MAX_PAGE_SIZE
 from vsem_fms.app.exceptions.file_exceptions import FolderNotFoundError, InvalidCursorError
 from vsem_fms.app.schemas.pagination import FileNameList, FileNamePage
@@ -15,7 +16,6 @@ router = APIRouter(prefix="/files", tags=["Files"])
 @router.get(
     "/{folder}/{subfolder}",
     response_model=FileNamePage | FileNameList,
-    dependencies=[Depends(get_api_key)],
     status_code=status.HTTP_200_OK,
     summary="List stored files",
     description=(
@@ -30,6 +30,7 @@ router = APIRouter(prefix="/files", tags=["Files"])
     },
 )
 async def get_files_list(
+    principal: Annotated[APIPrincipal, Depends(require_scope(APIScope.FILES_LIST))],
     file_service: Annotated[FileService, Depends(FileService)],
     folder: str,
     subfolder: str,
@@ -43,6 +44,7 @@ async def get_files_list(
     ] = None,
 ) -> FileNamePage | FileNameList:
     """List stored logical filenames, optionally using cursor pagination."""
+    authorize_folder_access(principal, APIScope.FILES_LIST, folder=folder, subfolder=subfolder)
     try:
         if limit is None and cursor is None:
             files = await file_service.list_files(folder=folder, subfolder=subfolder)

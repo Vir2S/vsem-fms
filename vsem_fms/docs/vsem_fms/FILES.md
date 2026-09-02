@@ -2,7 +2,17 @@
 
 Base path: `/api/v1`
 
-All file endpoints require the `X-API-Key` header.
+All file endpoints require the `X-API-Key` header. VSEM FMS supports the backward-compatible single `API_KEY` as well as a hashed `API_KEYS` registry with per-client scopes and optional logical-folder restrictions.
+
+Operation scopes:
+
+- upload: `files:write`
+- retrieve file, metadata, or `HEAD`: `files:read`
+- list filenames or metadata: `files:list`
+- delete: `files:delete`
+- `admin`: all operations
+
+Missing, unknown, or disabled keys return `401`; an authenticated key outside its scope or folder restriction returns `403`.
 
 ## Upload a file
 

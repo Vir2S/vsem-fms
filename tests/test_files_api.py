@@ -106,7 +106,7 @@ def test_invalid_api_key_is_rejected(client):
         "/api/v1/files/user-1/project-1",
         headers={"X-API-Key": "wrong-key"},
     )
-    assert response.status_code == 403
+    assert response.status_code == 401
 
 
 def test_upload_rejects_non_routeable_folder_segments(client):
@@ -381,3 +381,139 @@ def test_pagination_rejects_invalid_cursor_and_out_of_range_limit(client):
 
     assert client.get("/api/v1/files/user-1/project-1?limit=0").status_code == 422
     assert client.get("/api/v1/files/user-1/project-1?limit=501").status_code == 422
+
+
+def _registry_key(
+    secret: str,
+    *,
+    key_id: str,
+    scopes: set[str],
+    folder_prefix: str | None = None,
+    enabled: bool = True,
+):
+    from vsem_fms.app.core.api_keys import APIKeyConfig
+    from vsem_fms.app.core.api_keys import hash_api_key
+
+    return APIKeyConfig(
+        id=key_id,
+        name=f"Test {key_id}",
+        secret_hash=hash_api_key(secret),
+        enabled=enabled,
+        scopes=scopes,
+        folder_prefix=folder_prefix,
+    )
+
+
+def test_read_only_registry_key_can_read_but_cannot_write_or_delete(client, monkeypatch):
+    secret = "fms_live_readonly_0123456789"
+
+    # Seed a file using the backward-compatible legacy admin key.
+    assert upload(client, "readonly.txt", b"payload").status_code == 201
+
+    monkeypatch.setattr(settings, "API_KEY", None)
+    monkeypatch.setattr(
+        settings,
+        "API_KEYS",
+        [_registry_key(secret, key_id="reader", scopes={"files:read", "files:list"})],
+    )
+    client.headers.update({"X-API-Key": secret})
+
+    response = client.get("/api/v1/files/user-1/project-1")
+    assert response.status_code == 200
+
+    response = client.get("/api/v1/files/user-1/project-1/readonly.txt")
+    assert response.status_code == 200
+
+    response = upload(client, "blocked.txt", b"nope")
+    assert response.status_code == 403
+
+    response = client.delete("/api/v1/files/user-1/project-1/readonly.txt")
+    assert response.status_code == 403
+
+
+def test_folder_scoped_key_cannot_escape_its_logical_folder(client, monkeypatch):
+    secret = "fms_live_folder_scope_0123456789"
+    assert upload(client, "allowed.txt", b"allowed").status_code == 201
+
+    monkeypatch.setattr(settings, "API_KEY", None)
+    monkeypatch.setattr(
+        settings,
+        "API_KEYS",
+        [
+            _registry_key(
+                secret,
+                key_id="project-reader",
+                scopes={"files:read", "files:list"},
+                folder_prefix="user-1/project-1",
+            )
+        ],
+    )
+    client.headers.update({"X-API-Key": secret})
+
+    assert client.get("/api/v1/files/user-1/project-1").status_code == 200
+    assert client.get("/api/v1/files/user-1/project-1/allowed.txt").status_code == 200
+
+    response = client.get("/api/v1/files/user-1/project-2")
+    assert response.status_code == 403
+
+    response = client.get("/api/v1/files/user-2/project-1")
+    assert response.status_code == 403
+
+
+def test_disabled_registry_key_is_unauthorized(client, monkeypatch):
+    secret = "fms_live_disabled_0123456789"
+    monkeypatch.setattr(settings, "API_KEY", None)
+    monkeypatch.setattr(
+        settings,
+        "API_KEYS",
+        [_registry_key(secret, key_id="disabled", scopes={"files:list"}, enabled=False)],
+    )
+    client.headers.update({"X-API-Key": secret})
+
+    response = client.get("/api/v1/files/user-1/project-1")
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "ApiKey"
+
+
+def test_admin_registry_key_bypasses_operation_scopes(client, monkeypatch):
+    secret = "fms_live_admin_0123456789"
+    monkeypatch.setattr(settings, "API_KEY", None)
+    monkeypatch.setattr(
+        settings,
+        "API_KEYS",
+        [_registry_key(secret, key_id="admin", scopes={"admin"})],
+    )
+    client.headers.update({"X-API-Key": secret})
+
+    assert upload(client, "admin.txt", b"payload").status_code == 201
+    assert client.get("/api/v1/files/user-1/project-1/admin.txt").status_code == 200
+    assert client.delete("/api/v1/files/user-1/project-1/admin.txt").status_code == 204
+
+
+def test_api_client_identity_is_added_to_request_completion_log(client, monkeypatch):
+    import json
+
+    from loguru import logger
+
+    secret = "fms_live_audit_0123456789"
+    monkeypatch.setattr(settings, "API_KEY", None)
+    monkeypatch.setattr(
+        settings,
+        "API_KEYS",
+        [_registry_key(secret, key_id="audit-client", scopes={"files:list"})],
+    )
+    client.headers.update({"X-API-Key": secret})
+
+    captured: list[str] = []
+    sink_id = logger.add(captured.append, serialize=True)
+    try:
+        response = client.get("/api/v1/files/user-1/project-1")
+    finally:
+        logger.remove(sink_id)
+
+    # The folder may not exist in this isolated test; authentication/audit still completed.
+    assert response.status_code in {200, 404}
+    events = [json.loads(item)["record"] for item in captured]
+    completion = next(event for event in events if event["message"] == "HTTP request completed")
+    assert completion["extra"]["api_client_id"] == "audit-client"
+    assert completion["extra"]["api_client_name"] == "Test audit-client"

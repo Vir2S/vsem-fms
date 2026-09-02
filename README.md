@@ -19,10 +19,11 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Set a strong API key in `.env` before starting the service. `API_KEY` has no default and the application intentionally refuses to start when it is missing or too short.
+Configure authentication in `.env` before starting the service. Existing deployments can keep using the legacy `API_KEY`; new deployments should prefer the hashed `API_KEYS` registry described below. The application refuses to start if neither mechanism is configured.
 
 ```env
 API_KEY=replace-with-a-long-random-secret
+API_KEYS=[]
 STORAGE_PATH=./storage
 MAX_FILE_SIZE_MB=100
 MIN_FREE_DISK_SPACE_MB=1024
@@ -55,18 +56,42 @@ OpenAPI documentation is available at `http://localhost:5000/api/v1/docs`.
 
 Every HTTP response includes an `X-Request-ID` header. If the client sends its own `X-Request-ID` (up to 128 characters), VSEM FMS preserves it; otherwise the server generates a UUID. The same ID is attached to logs emitted while handling that request.
 
-`LOG_FORMAT=json` (default) writes structured JSON logs to stdout and `app.log`. Set `LOG_FORMAT=text` for human-readable local logs. Request completion events include the HTTP method, path, status code, duration in milliseconds, client IP, and request ID.
+`LOG_FORMAT=json` (default) writes structured JSON logs to stdout and `app.log`. Set `LOG_FORMAT=text` for human-readable local logs. Request completion events include the HTTP method, path, status code, duration in milliseconds, client IP, request ID, and authenticated API client identity when available.
 
 ## API authentication
 
-Protected endpoints require the `X-API-Key` header:
+Protected endpoints require the `X-API-Key` header. The `/api/v1/ping` health endpoint remains public.
+
+The legacy `API_KEY` setting is still supported and is treated as an unrestricted admin credential so existing deployments continue to work. For multiple clients, use `API_KEYS`, which stores only SHA-256 hashes and supports per-key permissions, revocation, and logical-folder restrictions. Both mechanisms may coexist during a rotation or migration.
+
+Generate a new high-entropy credential and its server-side hash:
 
 ```bash
-curl -H "X-API-Key: replace-with-a-long-random-secret" \
-  http://localhost:5000/api/v1/files/user-1/project-1
+python -m vsem_fms.commands.hash_api_key --generate
 ```
 
-The `/api/v1/ping` health endpoint is public.
+The command prints the client secret once and its SHA-256 hash. Give the `secret` to the client and store only the `sha256` value in the server registry:
+
+```env
+API_KEYS='[{"id":"crm-prod","name":"CRM production","secret_hash":"<64-char-sha256>","enabled":true,"scopes":["files:read","files:write","files:list"],"folder_prefix":"crm/*"}]'
+```
+
+Available scopes are:
+
+- `files:read` — download files, read JSON content, metadata, and `HEAD` headers
+- `files:write` — upload or overwrite files
+- `files:delete` — delete files
+- `files:list` — list filenames and metadata
+- `admin` — grants every operation scope
+
+`folder_prefix` is optional. A value such as `crm` or `crm/*` grants access to every subfolder under the logical `crm` folder; `crm/contracts` grants access only to that exact folder/subfolder pair. Omit it for unrestricted folder access. A valid key without the required scope or folder permission receives `403 Forbidden`; missing, unknown, or disabled credentials receive `401 Unauthorized`.
+
+Disable one credential with `"enabled": false` without affecting any other client. Request completion logs include `api_client_id` and `api_client_name`, making authenticated activity attributable to a specific integration.
+
+```bash
+curl -H "X-API-Key: <client-secret>" \
+  http://localhost:5000/api/v1/files/crm/contracts
+```
 
 ## File API
 
@@ -131,6 +156,10 @@ Pass `next_cursor` back as the next request's `cursor`. Cursors are opaque and r
 
 Metadata pagination uses the same parameters and calculates SHA-256 only for files included in the returned page.
 
+### Storage backend architecture
+
+The API/service layer depends on a `StorageBackend` contract rather than directly on the local filesystem implementation. `LocalStorageBackend` is the default backend and preserves the existing on-disk format and legacy v1.0.0 compatibility. The download contract supports both local paths and asynchronous byte streams, so a future S3-compatible backend can be added without changing the public HTTP API.
+
 ### Storage behavior
 
 Folder and subfolder identifiers are hashed internally. Starting with v1.0.1, filenames are stored using their validated original names so listing can return meaningful logical filenames. Read and delete operations remain compatible with hashed filenames created by v1.0.0.
@@ -139,14 +168,14 @@ Uploads are first written to a temporary file and committed atomically only afte
 
 ## Docker Compose
 
-Create the runtime environment file and set a strong API key:
+Create the runtime environment file and configure either a legacy key or the scoped key registry:
 
 ```bash
 cp .env.example .env
 python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-Put the generated value into `API_KEY` in `.env`, then start the service from the repository root:
+For the legacy mode, put the generated value into `API_KEY`. For scoped multi-key mode, use the generator and `API_KEYS` registry above. Then start the service from the repository root:
 
 ```bash
 docker compose up -d --build
@@ -197,7 +226,7 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-The test suite covers the complete upload/list/get/delete flow, failed overwrite data preservation, `overwrite=false`, arbitrary binary downloads, legacy hashed-file compatibility, API-key rejection, old-file cleanup, route-safe folder validation, and legacy configuration compatibility.
+The test suite covers the complete upload/list/get/delete flow, failed overwrite data preservation, `overwrite=false`, arbitrary binary downloads, legacy hashed-file compatibility, scoped multi-key authentication, folder restrictions, disabled-key rejection, audit identity, old-file cleanup, route-safe folder validation, and legacy configuration compatibility.
 
 ## Author
 

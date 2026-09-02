@@ -39,11 +39,15 @@ async def log_requests_middleware(
                 status_code=500,
                 duration_ms=duration_ms,
                 client_ip=client_ip,
+                api_client_id=getattr(request.state, "api_client_id", None),
+                api_client_name=getattr(request.state, "api_client_name", None),
             ).exception("HTTP request failed")
             raise
 
         duration_ms = round((perf_counter() - started_at) * 1000, 3)
         response.headers[REQUEST_ID_HEADER] = request_id
+        api_client_id = getattr(request.state, "api_client_id", None)
+        api_client_name = getattr(request.state, "api_client_name", None)
         content_length = response.headers.get("content-length")
         response_size = int(content_length) if content_length and content_length.isdigit() else None
         logger.bind(
@@ -53,5 +57,7 @@ async def log_requests_middleware(
             duration_ms=duration_ms,
             response_size=response_size,
             client_ip=client_ip,
+            api_client_id=api_client_id,
+            api_client_name=api_client_name,
         ).info("HTTP request completed")
         return response
