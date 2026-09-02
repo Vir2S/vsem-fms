@@ -20,7 +20,21 @@ class Settings(BaseSettings):
     # use API_KEYS with hashed, scoped credentials instead.
     API_KEY: str | None = Field(default=None, min_length=16)
     API_KEYS: list[APIKeyConfig] = Field(default_factory=list)
+
+    STORAGE_BACKEND: Literal["local", "s3"] = "local"
     STORAGE_PATH: str = "./storage"
+    S3_ENDPOINT_URL: str | None = None
+    S3_REGION: str | None = None
+    S3_BUCKET: str | None = None
+    S3_ACCESS_KEY: str | None = None
+    S3_SECRET_KEY: str | None = None
+    S3_SESSION_TOKEN: str | None = None
+    S3_PREFIX: str = "vsem-fms"
+    S3_ADDRESSING_STYLE: Literal["auto", "path", "virtual"] = "auto"
+    S3_VERIFY_SSL: bool = True
+    S3_MULTIPART_THRESHOLD_MB: int = Field(default=8, ge=5)
+    S3_MULTIPART_CHUNK_SIZE_MB: int = Field(default=8, ge=5)
+    S3_DOWNLOAD_CHUNK_SIZE_KB: int = Field(default=1024, ge=64, le=16384)
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: Literal["json", "text"] = "json"
     LOG_DIR: str = "./logs"
@@ -59,6 +73,21 @@ class Settings(BaseSettings):
             return None
         return value
 
+    @field_validator(
+        "S3_ENDPOINT_URL",
+        "S3_REGION",
+        "S3_BUCKET",
+        "S3_ACCESS_KEY",
+        "S3_SECRET_KEY",
+        "S3_SESSION_TOKEN",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_s3_value(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @model_validator(mode="after")
     def validate_api_credentials(self) -> "Settings":
         if self.API_KEY is None and not self.API_KEYS:
@@ -71,6 +100,14 @@ class Settings(BaseSettings):
         secret_hashes = [item.secret_hash for item in self.API_KEYS]
         if len(secret_hashes) != len(set(secret_hashes)):
             raise ValueError("API_KEYS secret_hash values must be unique")
+
+        if self.STORAGE_BACKEND == "s3":
+            if not self.S3_BUCKET:
+                raise ValueError("S3_BUCKET is required when STORAGE_BACKEND=s3")
+            if bool(self.S3_ACCESS_KEY) != bool(self.S3_SECRET_KEY):
+                raise ValueError("S3_ACCESS_KEY and S3_SECRET_KEY must be configured together")
+            if self.S3_MULTIPART_THRESHOLD_MB < self.S3_MULTIPART_CHUNK_SIZE_MB:
+                raise ValueError("S3_MULTIPART_THRESHOLD_MB must be >= S3_MULTIPART_CHUNK_SIZE_MB")
         return self
 
 

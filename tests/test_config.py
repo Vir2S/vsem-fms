@@ -83,3 +83,43 @@ def test_api_key_registry_rejects_duplicate_ids(monkeypatch):
 
     with pytest.raises(ValidationError, match="ids must be unique"):
         Settings(_env_file=None)
+
+
+def test_s3_backend_requires_bucket(monkeypatch):
+    import pytest
+    from pydantic import ValidationError
+
+    monkeypatch.setenv("API_KEY", "test-api-key-0123456789")
+    monkeypatch.setenv("STORAGE_BACKEND", "s3")
+    monkeypatch.delenv("S3_BUCKET", raising=False)
+
+    with pytest.raises(ValidationError, match="S3_BUCKET is required"):
+        Settings(_env_file=None)
+
+
+def test_s3_static_credentials_must_be_configured_as_pair(monkeypatch):
+    import pytest
+    from pydantic import ValidationError
+
+    monkeypatch.setenv("API_KEY", "test-api-key-0123456789")
+    monkeypatch.setenv("STORAGE_BACKEND", "s3")
+    monkeypatch.setenv("S3_BUCKET", "bucket")
+    monkeypatch.setenv("S3_ACCESS_KEY", "access")
+    monkeypatch.delenv("S3_SECRET_KEY", raising=False)
+
+    with pytest.raises(ValidationError, match="configured together"):
+        Settings(_env_file=None)
+
+
+def test_s3_can_use_default_aws_credential_chain(monkeypatch):
+    monkeypatch.setenv("API_KEY", "test-api-key-0123456789")
+    monkeypatch.setenv("STORAGE_BACKEND", "s3")
+    monkeypatch.setenv("S3_BUCKET", "bucket")
+    monkeypatch.delenv("S3_ACCESS_KEY", raising=False)
+    monkeypatch.delenv("S3_SECRET_KEY", raising=False)
+
+    configured = Settings(_env_file=None)
+
+    assert configured.STORAGE_BACKEND == "s3"
+    assert configured.S3_BUCKET == "bucket"
+    assert configured.S3_ACCESS_KEY is None
