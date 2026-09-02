@@ -70,4 +70,4 @@ class FileApiTests(unittest.TestCase):
             "/api/v1/files/customer-1/project-1",
             headers={"X-API-Key": "wrong"},
         )
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 401)
