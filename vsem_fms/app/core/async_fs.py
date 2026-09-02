@@ -1,4 +1,5 @@
 import hashlib
+from bisect import bisect_right
 import mimetypes
 import os
 import shutil
@@ -193,17 +194,48 @@ class AsyncFileManager:
         logger.info("File deleted: '{}/{}/{}'", folder, subfolder, filename)
         return True
 
-    async def list_files(self, folder: str, subfolder: str) -> list[str]:
-        """List logical filenames without exposing absolute server paths."""
+    async def _list_visible_file_paths(self, folder: str, subfolder: str) -> list[AsyncPath]:
+        """Return sorted visible file paths for a logical folder."""
         target_dir = self._get_hashed_path(folder=folder, subfolder=subfolder)
         await self._check_dir_exists(target_dir, folder, subfolder)
 
-        files: list[str] = []
+        files: list[AsyncPath] = []
         async for file_path in target_dir.iterdir():
             if await file_path.is_file() and not file_path.name.startswith(".upload-"):
-                files.append(file_path.name)
+                files.append(file_path)
 
-        return sorted(files)
+        return sorted(files, key=lambda item: item.name)
+
+    @staticmethod
+    def _page_file_paths(
+        files: list[AsyncPath],
+        *,
+        limit: int,
+        after: str | None,
+    ) -> tuple[list[AsyncPath], bool]:
+        """Slice one deterministic filename-ordered page plus a has-more flag."""
+        names = [file_path.name for file_path in files]
+        start = bisect_right(names, after) if after is not None else 0
+        window = files[start : start + limit + 1]
+        return window[:limit], len(window) > limit
+
+    async def list_files(self, folder: str, subfolder: str) -> list[str]:
+        """List logical filenames without exposing absolute server paths."""
+        files = await self._list_visible_file_paths(folder=folder, subfolder=subfolder)
+        return [file_path.name for file_path in files]
+
+    async def list_files_page(
+        self,
+        folder: str,
+        subfolder: str,
+        *,
+        limit: int,
+        after: str | None,
+    ) -> tuple[list[str], bool]:
+        """List one cursor page of logical filenames."""
+        files = await self._list_visible_file_paths(folder=folder, subfolder=subfolder)
+        page, has_more = self._page_file_paths(files, limit=limit, after=after)
+        return [file_path.name for file_path in page], has_more
 
 
     async def _calculate_sha256(self, file_path: AsyncPath) -> str:
@@ -234,15 +266,28 @@ class AsyncFileManager:
 
     async def list_file_metadata(self, folder: str, subfolder: str) -> list[dict[str, Any]]:
         """Return metadata for every listable file in a logical folder."""
-        target_dir = self._get_hashed_path(folder=folder, subfolder=subfolder)
-        await self._check_dir_exists(target_dir, folder, subfolder)
+        files = await self._list_visible_file_paths(folder=folder, subfolder=subfolder)
+        return [
+            await self._build_metadata(file_path=file_path, logical_filename=file_path.name)
+            for file_path in files
+        ]
 
-        metadata: list[dict[str, Any]] = []
-        async for file_path in target_dir.iterdir():
-            if await file_path.is_file() and not file_path.name.startswith(".upload-"):
-                metadata.append(await self._build_metadata(file_path=file_path, logical_filename=file_path.name))
-
-        return sorted(metadata, key=lambda item: item["filename"])
+    async def list_file_metadata_page(
+        self,
+        folder: str,
+        subfolder: str,
+        *,
+        limit: int,
+        after: str | None,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Return metadata for one page, hashing only files included in that page."""
+        files = await self._list_visible_file_paths(folder=folder, subfolder=subfolder)
+        page, has_more = self._page_file_paths(files, limit=limit, after=after)
+        metadata = [
+            await self._build_metadata(file_path=file_path, logical_filename=file_path.name)
+            for file_path in page
+        ]
+        return metadata, has_more
 
     async def cleanup_old_files(self) -> int:
         """Delete files older than MAX_FILE_AGE_HOURS recursively and return the count."""

@@ -9,8 +9,10 @@ from loguru import logger
 
 from vsem_fms.app.constants import TEXT_EXTENSIONS
 from vsem_fms.app.core.async_fs import AsyncFileManager
+from vsem_fms.app.core.pagination import DEFAULT_PAGE_SIZE, decode_cursor, encode_cursor
 from vsem_fms.app.exceptions.file_exceptions import (
     FileAlreadyExistsError,
+    InvalidCursorError,
     FileNotFound,
     FileSizeError,
     FileWriteError,
@@ -46,6 +48,42 @@ class FileService:
 
     async def list_files(self, folder: str, subfolder: str) -> list[str]:
         return await self.file_manager.list_files(folder=folder, subfolder=subfolder)
+
+    @staticmethod
+    def _decode_cursor(cursor: str | None) -> str | None:
+        if cursor is None:
+            return None
+        try:
+            return decode_cursor(cursor)
+        except ValueError as exc:
+            raise InvalidCursorError() from exc
+
+    @staticmethod
+    def _page_response(items: list[object], has_more: bool) -> dict[str, object]:
+        next_cursor = encode_cursor(str(items[-1])) if has_more and items else None
+        return {
+            "files": items,
+            "has_more": has_more,
+            "next_cursor": next_cursor,
+        }
+
+    async def list_files_page(
+        self,
+        folder: str,
+        subfolder: str,
+        *,
+        limit: int | None,
+        cursor: str | None,
+    ) -> dict[str, object]:
+        """Return one cursor page while preserving the legacy unpaginated API separately."""
+        after = self._decode_cursor(cursor)
+        files, has_more = await self.file_manager.list_files_page(
+            folder=folder,
+            subfolder=subfolder,
+            limit=limit or DEFAULT_PAGE_SIZE,
+            after=after,
+        )
+        return self._page_response(files, has_more)
 
     async def read_file(self, folder: str, subfolder: str, file_name: str) -> bytes:
         try:
@@ -99,6 +137,29 @@ class FileService:
     async def list_file_metadata(self, folder: str, subfolder: str) -> list[dict[str, object]]:
         """Return public metadata for all listable files in a logical folder."""
         return await self.file_manager.list_file_metadata(folder=folder, subfolder=subfolder)
+
+    async def list_file_metadata_page(
+        self,
+        folder: str,
+        subfolder: str,
+        *,
+        limit: int | None,
+        cursor: str | None,
+    ) -> dict[str, object]:
+        """Return one metadata page and compute checksums only for that page."""
+        after = self._decode_cursor(cursor)
+        files, has_more = await self.file_manager.list_file_metadata_page(
+            folder=folder,
+            subfolder=subfolder,
+            limit=limit or DEFAULT_PAGE_SIZE,
+            after=after,
+        )
+        next_cursor = encode_cursor(str(files[-1]["filename"])) if has_more and files else None
+        return {
+            "files": files,
+            "has_more": has_more,
+            "next_cursor": next_cursor,
+        }
 
     async def delete_file(self, folder: str, subfolder: str, filename: str) -> None:
         try:

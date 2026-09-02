@@ -108,6 +108,29 @@ UTF-8 files with `.txt`, `.csv`, `.md`, `.json`, or `.xml` extensions are return
 
 Metadata responses expose `filename`, `size`, `content_type`, `modified_at` (UTC), and a streaming-computed `sha256`. `HEAD` returns the same essential metadata through standard headers plus `ETag` and `X-Checksum-SHA256`, without a response body. The original filename-only list endpoint is unchanged for backward compatibility.
 
+### Cursor pagination
+
+Filename and metadata listings support opt-in cursor pagination with `limit` and `cursor` query parameters. Existing requests without either parameter keep the legacy response shape unchanged.
+
+```bash
+curl -H "X-API-Key: replace-with-a-long-random-secret" \
+  "http://localhost:5000/api/v1/files/user-1/project-1?limit=100"
+```
+
+A paginated response includes `has_more` and `next_cursor`:
+
+```json
+{
+  "files": ["a.txt", "b.txt"],
+  "has_more": true,
+  "next_cursor": "djEAYi50eHQ"
+}
+```
+
+Pass `next_cursor` back as the next request's `cursor`. Cursors are opaque and remain usable if the last file from the previous page is deleted between requests. `limit` accepts values from 1 to 500; when only `cursor` is supplied, the page size defaults to 100.
+
+Metadata pagination uses the same parameters and calculates SHA-256 only for files included in the returned page.
+
 ### Storage behavior
 
 Folder and subfolder identifiers are hashed internally. Starting with v1.0.1, filenames are stored using their validated original names so listing can return meaningful logical filenames. Read and delete operations remain compatible with hashed filenames created by v1.0.0.

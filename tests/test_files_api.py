@@ -281,3 +281,103 @@ def test_request_id_propagates_to_application_logs(client):
     events = [json.loads(item)["record"] for item in captured]
     saved = next(event for event in events if event["message"] == "File saved successfully: 'trace.txt'")
     assert saved["extra"]["request_id"] == "upload-trace-456"
+
+
+def test_filename_listing_supports_cursor_pagination_without_breaking_legacy_response(client):
+    for filename in ("a.txt", "b.txt", "c.txt", "d.txt", "e.txt"):
+        assert upload(client, filename, filename.encode()).status_code == 201
+
+    legacy = client.get("/api/v1/files/user-1/project-1")
+    assert legacy.status_code == 200
+    assert legacy.json() == {"files": ["a.txt", "b.txt", "c.txt", "d.txt", "e.txt"]}
+
+    first = client.get("/api/v1/files/user-1/project-1?limit=2")
+    assert first.status_code == 200
+    assert first.json()["files"] == ["a.txt", "b.txt"]
+    assert first.json()["has_more"] is True
+    assert first.json()["next_cursor"]
+
+    second = client.get(
+        "/api/v1/files/user-1/project-1",
+        params={"limit": 2, "cursor": first.json()["next_cursor"]},
+    )
+    assert second.status_code == 200
+    assert second.json()["files"] == ["c.txt", "d.txt"]
+    assert second.json()["has_more"] is True
+
+    third = client.get(
+        "/api/v1/files/user-1/project-1",
+        params={"limit": 2, "cursor": second.json()["next_cursor"]},
+    )
+    assert third.status_code == 200
+    assert third.json() == {
+        "files": ["e.txt"],
+        "has_more": False,
+        "next_cursor": None,
+    }
+
+
+def test_cursor_remains_usable_when_previous_page_last_file_is_deleted(client):
+    for filename in ("a.txt", "b.txt", "c.txt", "d.txt"):
+        assert upload(client, filename, filename.encode()).status_code == 201
+
+    first = client.get("/api/v1/files/user-1/project-1?limit=2")
+    cursor = first.json()["next_cursor"]
+    assert client.delete("/api/v1/files/user-1/project-1/b.txt").status_code == 204
+
+    second = client.get(
+        "/api/v1/files/user-1/project-1",
+        params={"limit": 2, "cursor": cursor},
+    )
+    assert second.status_code == 200
+    assert second.json() == {
+        "files": ["c.txt", "d.txt"],
+        "has_more": False,
+        "next_cursor": None,
+    }
+
+
+def test_metadata_listing_paginates_before_calculating_checksums(client, monkeypatch):
+    from vsem_fms.app.core.async_fs import AsyncFileManager
+
+    for filename in ("a.txt", "b.txt", "c.txt", "d.txt"):
+        assert upload(client, filename, filename.encode()).status_code == 201
+
+    original = AsyncFileManager._calculate_sha256
+    hashed_files: list[str] = []
+
+    async def counting_sha256(self, file_path):
+        hashed_files.append(file_path.name)
+        return await original(self, file_path)
+
+    monkeypatch.setattr(AsyncFileManager, "_calculate_sha256", counting_sha256)
+
+    first = client.get("/api/v1/files/user-1/project-1/metadata?limit=2")
+    assert first.status_code == 200
+    assert [item["filename"] for item in first.json()["files"]] == ["a.txt", "b.txt"]
+    assert first.json()["has_more"] is True
+    assert len(hashed_files) == 2
+
+    second = client.get(
+        "/api/v1/files/user-1/project-1/metadata",
+        params={"limit": 2, "cursor": first.json()["next_cursor"]},
+    )
+    assert second.status_code == 200
+    assert [item["filename"] for item in second.json()["files"]] == ["c.txt", "d.txt"]
+    assert second.json()["has_more"] is False
+    assert second.json()["next_cursor"] is None
+    assert len(hashed_files) == 4
+
+
+def test_pagination_rejects_invalid_cursor_and_out_of_range_limit(client):
+    assert upload(client, "a.txt", b"a").status_code == 201
+
+    response = client.get(
+        "/api/v1/files/user-1/project-1",
+        params={"limit": 2, "cursor": "not-a-valid-cursor"},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid pagination cursor."
+
+    assert client.get("/api/v1/files/user-1/project-1?limit=0").status_code == 422
+    assert client.get("/api/v1/files/user-1/project-1?limit=501").status_code == 422

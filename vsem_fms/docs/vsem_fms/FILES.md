@@ -61,6 +61,24 @@ Success: `200 OK`
 
 Only logical filenames are returned; absolute storage paths are never exposed.
 
+### Cursor pagination
+
+Add `limit` (1-500) to opt into cursor pagination. A paginated response adds `has_more` and `next_cursor`; use that cursor on the next request. If `cursor` is supplied without `limit`, the default page size is 100. Requests without either query parameter keep the legacy `{"files": [...]}` response unchanged.
+
+```http
+GET /api/v1/files/{folder}/{subfolder}?limit=100&cursor={next_cursor}
+```
+
+```json
+{
+  "files": ["file1.txt", "report.pdf"],
+  "has_more": true,
+  "next_cursor": "opaque-token"
+}
+```
+
+The metadata listing endpoint supports the same `limit` and `cursor` parameters. It calculates SHA-256 only for files on the requested page.
+
 ## List file metadata
 
 `GET /api/v1/files/{folder}/{subfolder}/metadata`

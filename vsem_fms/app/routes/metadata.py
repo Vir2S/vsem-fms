@@ -1,12 +1,19 @@
-from email.utils import format_datetime
 from datetime import datetime
+from email.utils import format_datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from vsem_fms.app.core.auth import get_api_key
-from vsem_fms.app.exceptions.file_exceptions import FileNotFound, FolderNotFoundError, InvalidFileNameError
+from vsem_fms.app.core.pagination import MAX_PAGE_SIZE
+from vsem_fms.app.exceptions.file_exceptions import (
+    FileNotFound,
+    FolderNotFoundError,
+    InvalidCursorError,
+    InvalidFileNameError,
+)
 from vsem_fms.app.schemas.file_metadata import FileMetadata, FileMetadataList
+from vsem_fms.app.schemas.pagination import FileMetadataPage
 from vsem_fms.app.services.file_service import FileService
 
 
@@ -26,19 +33,45 @@ def _metadata_headers(metadata: dict[str, object]) -> dict[str, str]:
 
 @router.get(
     "/{folder}/{subfolder}/metadata",
-    response_model=FileMetadataList,
+    response_model=FileMetadataPage | FileMetadataList,
     dependencies=[Depends(get_api_key)],
     summary="List file metadata",
-    description="Retrieve size, content type, modification time, and SHA-256 for files in a folder.",
+    description=(
+        "Retrieve size, content type, modification time, and SHA-256 for files in a folder. "
+        "Supplying limit or cursor enables cursor pagination."
+    ),
 )
 async def list_metadata(
     file_service: Annotated[FileService, Depends(FileService)],
     folder: str,
     subfolder: str,
-) -> FileMetadataList:
+    limit: Annotated[
+        int | None,
+        Query(ge=1, le=MAX_PAGE_SIZE, description="Page size. Supplying it enables cursor pagination."),
+    ] = None,
+    cursor: Annotated[
+        str | None,
+        Query(min_length=1, max_length=2048, description="Opaque cursor returned by the previous page."),
+    ] = None,
+) -> FileMetadataPage | FileMetadataList:
     try:
-        files = await file_service.list_file_metadata(folder=folder, subfolder=subfolder)
-        return FileMetadataList(files=[FileMetadata.model_validate(item) for item in files])
+        if limit is None and cursor is None:
+            files = await file_service.list_file_metadata(folder=folder, subfolder=subfolder)
+            return FileMetadataList(files=[FileMetadata.model_validate(item) for item in files])
+
+        page = await file_service.list_file_metadata_page(
+            folder=folder,
+            subfolder=subfolder,
+            limit=limit,
+            cursor=cursor,
+        )
+        return FileMetadataPage(
+            files=[FileMetadata.model_validate(item) for item in page["files"]],
+            has_more=bool(page["has_more"]),
+            next_cursor=str(page["next_cursor"]) if page["next_cursor"] is not None else None,
+        )
+    except InvalidCursorError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.detail) from exc
     except FolderNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=exc.detail) from exc
 
