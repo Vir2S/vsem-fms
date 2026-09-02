@@ -1,8 +1,10 @@
 import hashlib
+import mimetypes
 import os
 import shutil
 import time
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from anyio import Path as AsyncPath
@@ -202,6 +204,45 @@ class AsyncFileManager:
                 files.append(file_path.name)
 
         return sorted(files)
+
+
+    async def _calculate_sha256(self, file_path: AsyncPath) -> str:
+        """Calculate SHA-256 without loading the whole file into memory."""
+        digest = hashlib.sha256()
+        async with await open_file(file_path, "rb") as file_obj:
+            while chunk := await file_obj.read(1024 * 1024):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    async def _build_metadata(self, file_path: AsyncPath, logical_filename: str) -> dict[str, Any]:
+        """Build public metadata for one resolved file path."""
+        stat_result = await file_path.stat()
+        content_type = mimetypes.guess_type(logical_filename)[0] or "application/octet-stream"
+        modified_at = datetime.fromtimestamp(stat_result.st_mtime, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        return {
+            "filename": logical_filename,
+            "size": stat_result.st_size,
+            "content_type": content_type,
+            "modified_at": modified_at,
+            "sha256": await self._calculate_sha256(file_path),
+        }
+
+    async def get_file_metadata(self, folder: str, subfolder: str, filename: str) -> dict[str, Any]:
+        """Return metadata for a logical file, including legacy storage resolution."""
+        file_path = await self._resolve_file_path(folder=folder, subfolder=subfolder, filename=filename)
+        return await self._build_metadata(file_path=file_path, logical_filename=filename)
+
+    async def list_file_metadata(self, folder: str, subfolder: str) -> list[dict[str, Any]]:
+        """Return metadata for every listable file in a logical folder."""
+        target_dir = self._get_hashed_path(folder=folder, subfolder=subfolder)
+        await self._check_dir_exists(target_dir, folder, subfolder)
+
+        metadata: list[dict[str, Any]] = []
+        async for file_path in target_dir.iterdir():
+            if await file_path.is_file() and not file_path.name.startswith(".upload-"):
+                metadata.append(await self._build_metadata(file_path=file_path, logical_filename=file_path.name))
+
+        return sorted(metadata, key=lambda item: item["filename"])
 
     async def cleanup_old_files(self) -> int:
         """Delete files older than MAX_FILE_AGE_HOURS recursively and return the count."""

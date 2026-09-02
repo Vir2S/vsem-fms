@@ -156,3 +156,52 @@ def test_insufficient_disk_space_returns_507_and_preserves_existing_file(client,
     response = client.get("/api/v1/files/user-1/project-1/important.txt")
     assert response.status_code == 200
     assert response.json()["content"] == "original"
+
+
+def test_file_metadata_api_and_head(client):
+    payload = b"metadata payload"
+    assert upload(client, "report.pdf", payload).status_code == 201
+
+    response = client.get("/api/v1/files/user-1/project-1/report.pdf/metadata")
+    assert response.status_code == 200
+    metadata = response.json()
+    assert metadata["filename"] == "report.pdf"
+    assert metadata["size"] == len(payload)
+    assert metadata["content_type"] == "application/pdf"
+    assert metadata["sha256"] == hashlib.sha256(payload).hexdigest()
+    assert metadata["modified_at"].endswith("Z")
+
+    response = client.head("/api/v1/files/user-1/project-1/report.pdf")
+    assert response.status_code == 200
+    assert response.content == b""
+    assert response.headers["content-length"] == str(len(payload))
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.headers["x-checksum-sha256"] == hashlib.sha256(payload).hexdigest()
+    assert response.headers["etag"] == f'"sha256:{hashlib.sha256(payload).hexdigest()}"'
+    assert "last-modified" in response.headers
+
+
+def test_metadata_listing_is_additive_and_does_not_break_name_listing(client):
+    assert upload(client, "a.txt", b"alpha").status_code == 201
+    assert upload(client, "b.bin", b"\x00\x01").status_code == 201
+
+    response = client.get("/api/v1/files/user-1/project-1")
+    assert response.status_code == 200
+    assert response.json() == {"files": ["a.txt", "b.bin"]}
+
+    response = client.get("/api/v1/files/user-1/project-1/metadata")
+    assert response.status_code == 200
+    files = response.json()["files"]
+    assert [item["filename"] for item in files] == ["a.txt", "b.bin"]
+    assert files[0]["size"] == 5
+    assert files[0]["content_type"] == "text/plain"
+    assert files[0]["sha256"] == hashlib.sha256(b"alpha").hexdigest()
+    assert files[1]["content_type"] == "application/octet-stream"
+
+
+def test_metadata_endpoints_return_404_for_missing_file(client):
+    response = client.get("/api/v1/files/user-1/project-1/missing.txt/metadata")
+    assert response.status_code == 404
+
+    response = client.head("/api/v1/files/user-1/project-1/missing.txt")
+    assert response.status_code == 404

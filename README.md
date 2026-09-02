@@ -67,7 +67,10 @@ The `/api/v1/ping` health endpoint is public.
 | --- | --- | --- |
 | `POST` | `/api/v1/files` | Upload a file using multipart form data |
 | `GET` | `/api/v1/files/{folder}/{subfolder}` | List logical filenames |
+| `GET` | `/api/v1/files/{folder}/{subfolder}/metadata` | List file metadata |
 | `GET` | `/api/v1/files/{folder}/{subfolder}/{filename}` | Retrieve a file |
+| `HEAD` | `/api/v1/files/{folder}/{subfolder}/{filename}` | Retrieve file metadata as headers |
+| `GET` | `/api/v1/files/{folder}/{subfolder}/{filename}/metadata` | Retrieve file metadata as JSON |
 | `DELETE` | `/api/v1/files/{folder}/{subfolder}/{filename}` | Delete a file |
 
 ### Upload
@@ -95,6 +98,8 @@ The response contains a logical path only. Internal filesystem paths are never r
 ### Retrieval behavior
 
 UTF-8 files with `.txt`, `.csv`, `.md`, `.json`, or `.xml` extensions are returned as JSON containing `filename` and `content`. All other extensions are streamed from disk as downloads. Unknown extensions use `application/octet-stream` when no MIME type can be inferred.
+
+Metadata responses expose `filename`, `size`, `content_type`, `modified_at` (UTC), and a streaming-computed `sha256`. `HEAD` returns the same essential metadata through standard headers plus `ETag` and `X-Checksum-SHA256`, without a response body. The original filename-only list endpoint is unchanged for backward compatibility.
 
 ### Storage behavior
 

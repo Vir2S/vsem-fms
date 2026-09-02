@@ -61,6 +61,30 @@ Success: `200 OK`
 
 Only logical filenames are returned; absolute storage paths are never exposed.
 
+## List file metadata
+
+`GET /api/v1/files/{folder}/{subfolder}/metadata`
+
+Returns metadata for every listable file while leaving the original filename-only list endpoint unchanged. Each item contains:
+
+- `filename`
+- `size` in bytes
+- `content_type`
+- `modified_at` as UTC ISO 8601
+- `sha256`
+
+## Retrieve file metadata
+
+`GET /api/v1/files/{folder}/{subfolder}/{filename}/metadata`
+
+Returns the same metadata for one logical file. SHA-256 is calculated in chunks so the file is not loaded fully into memory.
+
+## Retrieve file headers
+
+`HEAD /api/v1/files/{folder}/{subfolder}/{filename}`
+
+Returns no body and includes `Content-Length`, `Content-Type`, `Last-Modified`, `ETag`, and `X-Checksum-SHA256`.
+
 ## Retrieve a file
 
 `GET /api/v1/files/{folder}/{subfolder}/{filename}`

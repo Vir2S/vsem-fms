@@ -82,6 +82,24 @@ class FileService:
             filename=filename,
         )
 
+
+    async def get_file_metadata(self, folder: str, subfolder: str, filename: str) -> dict[str, object]:
+        """Return public metadata for one logical file."""
+        try:
+            return await self.file_manager.get_file_metadata(
+                folder=folder,
+                subfolder=subfolder,
+                filename=filename,
+            )
+        except FileNotFoundError as exc:
+            raise FileNotFound(folder=folder, subfolder=subfolder, file_name=filename) from exc
+        except ValueError as exc:
+            raise InvalidFileNameError(file_name=filename) from exc
+
+    async def list_file_metadata(self, folder: str, subfolder: str) -> list[dict[str, object]]:
+        """Return public metadata for all listable files in a logical folder."""
+        return await self.file_manager.list_file_metadata(folder=folder, subfolder=subfolder)
+
     async def delete_file(self, folder: str, subfolder: str, filename: str) -> None:
         try:
             await self.file_manager.delete_file(folder=folder, subfolder=subfolder, filename=filename)
