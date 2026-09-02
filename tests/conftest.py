@@ -12,6 +12,11 @@ from vsem_fms.app.main import app  # noqa: E402
 
 
 @pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
+
+
+@pytest.fixture
 def api_key() -> str:
     return settings.API_KEY
 

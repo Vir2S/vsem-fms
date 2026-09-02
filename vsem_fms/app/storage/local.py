@@ -18,6 +18,7 @@ from vsem_fms.app.exceptions.file_exceptions import (
     FileSizeError,
     FolderNotFoundError,
     InsufficientStorageError,
+    InvalidFileNameError,
 )
 from vsem_fms.app.storage.base import StorageBackend, StorageDownload
 
@@ -48,10 +49,14 @@ class LocalStorageBackend(StorageBackend):
         extension = os.path.splitext(original_filename)[1]
         return f"{self._hash_value(original_filename)}{extension}"
 
+    def _get_legacy_hashed_filename(self, original_filename: str) -> str:
+        """Backward-compatible alias for the legacy v1.0.0 filename hash helper."""
+        return self._get_hashed_filename(original_filename)
+
     def _validate_filename(self, filename: str | None) -> str:
         """Reject empty or path-like filenames before using them on disk."""
         if not filename or filename in {".", ".."} or "/" in filename or "\\" in filename or "\x00" in filename:
-            raise ValueError("Invalid filename")
+            raise InvalidFileNameError(file_name=filename)
         return filename
 
     def _file_candidates(self, folder: str, subfolder: str, filename: str) -> tuple[AsyncPath, AsyncPath]:
