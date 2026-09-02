@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -15,6 +17,7 @@ class Settings(BaseSettings):
     API_KEY: str = Field(min_length=16)
     STORAGE_PATH: str = "./storage"
     LOG_LEVEL: str = "INFO"
+    LOG_FORMAT: Literal["json", "text"] = "json"
     LOG_DIR: str = "./logs"
     MIN_FREE_DISK_SPACE_MB: int = Field(default=1024, ge=0)
     MAX_FILE_SIZE_MB: int = Field(

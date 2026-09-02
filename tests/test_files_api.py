@@ -205,3 +205,79 @@ def test_metadata_endpoints_return_404_for_missing_file(client):
 
     response = client.head("/api/v1/files/user-1/project-1/missing.txt")
     assert response.status_code == 404
+
+
+def test_request_id_is_generated_and_returned(client):
+    from uuid import UUID
+
+    response = client.get("/api/v1/ping")
+
+    assert response.status_code == 200
+    request_id = response.headers["x-request-id"]
+    assert str(UUID(request_id)) == request_id
+
+
+def test_client_request_id_is_preserved_and_added_to_structured_log(client):
+    import json
+
+    from loguru import logger
+
+    captured: list[str] = []
+    sink_id = logger.add(captured.append, serialize=True)
+    try:
+        response = client.get(
+            "/api/v1/ping",
+            headers={"X-Request-ID": "edge-request-123"},
+        )
+    finally:
+        logger.remove(sink_id)
+
+    assert response.status_code == 200
+    assert response.headers["x-request-id"] == "edge-request-123"
+
+    events = [json.loads(item)["record"] for item in captured]
+    completion = next(event for event in events if event["message"] == "HTTP request completed")
+    assert completion["extra"]["request_id"] == "edge-request-123"
+    assert completion["extra"]["http_method"] == "GET"
+    assert completion["extra"]["http_path"] == "/api/v1/ping"
+    assert completion["extra"]["status_code"] == 200
+    assert completion["extra"]["duration_ms"] >= 0
+    assert completion["extra"]["response_size"] is not None
+    assert "client_ip" in completion["extra"]
+
+
+def test_invalid_oversized_request_id_is_replaced(client):
+    from uuid import UUID
+
+    response = client.get(
+        "/api/v1/ping",
+        headers={"X-Request-ID": "x" * 129},
+    )
+
+    assert response.status_code == 200
+    request_id = response.headers["x-request-id"]
+    assert request_id != "x" * 129
+    assert str(UUID(request_id)) == request_id
+
+
+def test_request_id_propagates_to_application_logs(client):
+    import json
+
+    from loguru import logger
+
+    captured: list[str] = []
+    sink_id = logger.add(captured.append, serialize=True)
+    try:
+        response = client.post(
+            "/api/v1/files",
+            headers={"X-Request-ID": "upload-trace-456"},
+            data={"folder": "user-1", "subfolder": "project-1", "overwrite": "true"},
+            files={"file": ("trace.txt", b"trace me")},
+        )
+    finally:
+        logger.remove(sink_id)
+
+    assert response.status_code == 201
+    events = [json.loads(item)["record"] for item in captured]
+    saved = next(event for event in events if event["message"] == "File saved successfully: 'trace.txt'")
+    assert saved["extra"]["request_id"] == "upload-trace-456"

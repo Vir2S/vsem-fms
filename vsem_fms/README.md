@@ -29,6 +29,7 @@ MIN_FREE_DISK_SPACE_MB=1024
 MAX_FILE_AGE_HOURS=168
 CLEANUP_INTERVAL_SECONDS=3600
 LOG_LEVEL=INFO
+LOG_FORMAT=json
 LOG_DIR=./logs
 SERVER_HOST=0.0.0.0
 SERVER_PORT=5000
@@ -49,6 +50,12 @@ uvicorn vsem_fms.app.main:app --host 0.0.0.0 --port 5000
 ```
 
 OpenAPI documentation is available at `http://localhost:5000/api/v1/docs`.
+
+## Request tracing and structured logs
+
+Every HTTP response includes an `X-Request-ID` header. If the client sends its own `X-Request-ID` (up to 128 characters), VSEM FMS preserves it; otherwise the server generates a UUID. The same ID is attached to logs emitted while handling that request.
+
+`LOG_FORMAT=json` (default) writes structured JSON logs to stdout and `app.log`. Set `LOG_FORMAT=text` for human-readable local logs. Request completion events include the HTTP method, path, status code, duration in milliseconds, client IP, and request ID.
 
 ## API authentication
 
