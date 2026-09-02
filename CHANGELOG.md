@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.3] - 2026-09-02
+
+### Added
+
+- Added a dedicated Docker Compose cleanup worker that continuously enforces `MAX_FILE_AGE_HOURS` using the configurable `CLEANUP_INTERVAL_SECONDS` interval.
+- Added `MIN_FREE_DISK_SPACE_MB` protection so uploads stop with HTTP `507 Insufficient Storage` before exhausting the storage volume.
+- Added GitHub Actions CI for pytest, Python compilation, Docker Compose validation, and Docker image builds on pushes and pull requests.
+- Added regression coverage for cleanup deletion counts and disk-exhaustion overwrite safety.
+
+### Changed
+
+- Cleanup cycles now report how many files were deleted.
+- Version bumped to `1.0.3`.
+
 ## [1.0.2] - 2026-08-28
 
 ### Added

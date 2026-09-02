@@ -8,6 +8,7 @@ from vsem_fms.app.exceptions.file_exceptions import (
     FileSizeError,
     FileWriteError,
     InvalidFileNameError,
+    InsufficientStorageError,
 )
 from vsem_fms.app.schemas.upload_schemas import UploadRequest, UploadResponse
 from vsem_fms.app.services.file_service import FileService
@@ -26,6 +27,7 @@ router = APIRouter(prefix="/files", tags=["Files"])
     responses={
         400: {"description": "Invalid filename or file exceeds size limit."},
         409: {"description": "File already exists."},
+        507: {"description": "Insufficient storage space."},
         422: {"description": "Validation error."},
         500: {"description": "File write error."},
     },
@@ -42,5 +44,7 @@ async def upload_file(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.detail) from exc
     except FileAlreadyExistsError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=exc.detail) from exc
+    except InsufficientStorageError as exc:
+        raise HTTPException(status_code=status.HTTP_507_INSUFFICIENT_STORAGE, detail=exc.detail) from exc
     except FileWriteError as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=exc.detail) from exc
