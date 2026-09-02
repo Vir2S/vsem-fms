@@ -24,6 +24,7 @@ Configure authentication in `.env` before starting the service. Existing deploym
 ```env
 API_KEY=replace-with-a-long-random-secret
 API_KEYS=[]
+STORAGE_BACKEND=local
 STORAGE_PATH=./storage
 MAX_FILE_SIZE_MB=100
 MIN_FREE_DISK_SPACE_MB=1024
@@ -129,7 +130,7 @@ The response contains a logical path only. Internal filesystem paths are never r
 
 ### Retrieval behavior
 
-UTF-8 files with `.txt`, `.csv`, `.md`, `.json`, or `.xml` extensions are returned as JSON containing `filename` and `content`. All other extensions are streamed from disk as downloads. Unknown extensions use `application/octet-stream` when no MIME type can be inferred.
+UTF-8 files with `.txt`, `.csv`, `.md`, `.json`, or `.xml` extensions are returned as JSON containing `filename` and `content`. All other extensions are streamed from the configured storage backend as downloads. Unknown extensions use `application/octet-stream` when no MIME type can be inferred.
 
 Metadata responses expose `filename`, `size`, `content_type`, `modified_at` (UTC), and a streaming-computed `sha256`. `HEAD` returns the same essential metadata through standard headers plus `ETag` and `X-Checksum-SHA256`, without a response body. The original filename-only list endpoint is unchanged for backward compatibility.
 
@@ -158,7 +159,65 @@ Metadata pagination uses the same parameters and calculates SHA-256 only for fil
 
 ### Storage backend architecture
 
-The API/service layer depends on a `StorageBackend` contract rather than directly on the local filesystem implementation. `LocalStorageBackend` is the default backend and preserves the existing on-disk format and legacy v1.0.0 compatibility. The download contract supports both local paths and asynchronous byte streams, so a future S3-compatible backend can be added without changing the public HTTP API.
+The API/service layer depends on a `StorageBackend` contract rather than directly on a storage implementation. `LocalStorageBackend` remains the default and preserves the existing on-disk format and legacy v1.0.0 compatibility. `S3StorageBackend` implements the same contract for AWS S3 and S3-compatible providers, so switching backends does not change the public HTTP API.
+
+Select the backend with:
+
+```env
+STORAGE_BACKEND=local
+```
+
+or:
+
+```env
+STORAGE_BACKEND=s3
+S3_BUCKET=my-fms-bucket
+```
+
+### S3-compatible storage
+
+The S3 backend supports AWS S3 plus providers exposing the standard S3 API, including Hetzner Object Storage, MinIO, and Cloudflare R2. `S3_ENDPOINT_URL` is optional for AWS and should be set for custom S3-compatible endpoints.
+
+A minimal AWS configuration can rely on the normal AWS credential chain (environment variables, shared credentials, IAM role, or workload identity):
+
+```env
+STORAGE_BACKEND=s3
+S3_BUCKET=my-fms-bucket
+S3_REGION=eu-central-1
+S3_PREFIX=vsem-fms
+```
+
+For an S3-compatible provider with static credentials:
+
+```env
+STORAGE_BACKEND=s3
+S3_ENDPOINT_URL=https://<provider-endpoint>
+S3_REGION=eu-central
+S3_BUCKET=my-fms-bucket
+S3_ACCESS_KEY=<access-key>
+S3_SECRET_KEY=<secret-key>
+S3_PREFIX=vsem-fms
+S3_ADDRESSING_STYLE=auto
+S3_VERIFY_SSL=true
+```
+
+`S3_ACCESS_KEY` and `S3_SECRET_KEY` must be configured together. Leave both unset when using the AWS default credential chain. `S3_ADDRESSING_STYLE` accepts `auto`, `path`, or `virtual`; `path` is useful for some MinIO deployments.
+
+Uploads smaller than `S3_MULTIPART_THRESHOLD_MB` use a regular object PUT. Larger uploads use multipart upload with `S3_MULTIPART_CHUNK_SIZE_MB` parts, keep memory usage bounded, enforce the same `MAX_FILE_SIZE_MB` limit, and abort an incomplete multipart upload when validation or transfer fails. `overwrite=false` uses S3 conditional writes (`If-None-Match: *`) so a concurrent writer cannot silently replace an object between the existence check and commit. Binary downloads stream directly from the remote object body instead of loading the complete object into RAM.
+
+The S3 object layout hashes logical folder and subfolder identifiers with SHA-256 before building object keys. Filenames remain logical so deterministic listing and cursor pagination still work. Uploaded objects receive a SHA-256 object tag used by metadata endpoints; objects without that tag remain supported and are hashed by streaming their content when metadata is requested.
+
+S3 listing uses the provider's lexicographic object ordering and `StartAfter` semantics for cursor pages instead of scanning the entire logical folder. The cleanup worker also works with S3 and deletes expired objects under `S3_PREFIX`.
+
+Relevant settings:
+
+```env
+S3_MULTIPART_THRESHOLD_MB=8
+S3_MULTIPART_CHUNK_SIZE_MB=8
+S3_DOWNLOAD_CHUNK_SIZE_KB=1024
+```
+
+`MIN_FREE_DISK_SPACE_MB` protects only the local filesystem backend and is ignored by S3 storage.
 
 ### Storage behavior
 
@@ -188,7 +247,7 @@ docker compose ps
 docker compose logs -f vsem-fms
 ```
 
-Persistent files and logs are bind-mounted to `./storage` and `./logs`. A dedicated cleanup service periodically removes files older than `MAX_FILE_AGE_HOURS`, while uploads preserve at least `MIN_FREE_DISK_SPACE_MB` of free disk space. The image health check uses `/api/v1/ping`, and the service restarts automatically unless it is explicitly stopped.
+Logs are bind-mounted to `./logs`. With `STORAGE_BACKEND=local`, files are bind-mounted to `./storage`; with `STORAGE_BACKEND=s3`, that storage mount is unused and file data lives in the configured bucket. A dedicated cleanup service periodically removes files or objects older than `MAX_FILE_AGE_HOURS`. Local uploads preserve at least `MIN_FREE_DISK_SPACE_MB` of free disk space. The image health check uses `/api/v1/ping`, and the service restarts automatically unless it is explicitly stopped.
 
 Stop the service:
 
@@ -226,7 +285,7 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-The test suite covers the complete upload/list/get/delete flow, failed overwrite data preservation, `overwrite=false`, arbitrary binary downloads, legacy hashed-file compatibility, scoped multi-key authentication, folder restrictions, disabled-key rejection, audit identity, old-file cleanup, route-safe folder validation, and legacy configuration compatibility.
+The test suite covers the complete upload/list/get/delete flow, failed overwrite data preservation, `overwrite=false`, arbitrary binary downloads, legacy hashed-file compatibility, scoped multi-key authentication, folder restrictions, disabled-key rejection, audit identity, local and S3 cleanup, S3 streaming/multipart uploads, S3 metadata/checksums, cursor pagination, route-safe folder validation, and legacy configuration compatibility.
 
 ## Author
 

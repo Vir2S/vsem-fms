@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-02
+
 ### Added
 
 - Added file metadata endpoints with `size`, `content_type`, `modified_at`, and streaming SHA-256 checksums, plus `HEAD` support with metadata headers and ETags.
@@ -9,12 +11,19 @@
 - Added request correlation through `X-Request-ID`, structured JSON/text logging, request duration/status/response-size fields, and propagation of request context into internal service logs.
 - Added scoped multi-key API authentication with hashed key registries, per-key enable/disable state, `files:read`, `files:write`, `files:delete`, `files:list`, and `admin` scopes, optional folder-prefix restrictions, and client identity in request logs.
 - Added an API-key generation/hash CLI for provisioning multi-key credentials without requiring the application settings to start first.
+- Added an S3-compatible storage backend for AWS S3, Hetzner Object Storage, MinIO, Cloudflare R2, and other standard S3 endpoints, with streaming downloads, multipart uploads, S3-native cursor listing, SHA-256 metadata tags/fallback hashing, and retention cleanup.
 
 ### Changed
 
+- Version bumped to `1.1.0`.
 - Refactored storage access behind a pluggable `StorageBackend` contract and moved local filesystem behavior into `LocalStorageBackend`, keeping the existing HTTP API unchanged.
-- Added backend-neutral download handling so future remote/object-storage backends can stream data without requiring route or service-layer rewrites.
+- Added backend-neutral download handling so remote/object-storage backends can stream data without requiring route or service-layer rewrites.
 - Preserved the existing single `API_KEY` as a backward-compatible legacy admin credential while allowing deployments to opt into the new scoped `API_KEYS` registry.
+
+### Fixed
+
+- Restored CI compatibility by pinning AnyIO tests to the asyncio backend, preserving the legacy hashed-filename helper, and returning the domain-specific `InvalidFileNameError` for invalid local filenames.
+- Made invalid multipart path validation return HTTP `422` without depending on Starlette status-constant naming, and aligned the legacy authentication test with the `401 Unauthorized` contract for invalid API keys.
 
 ### Security
 

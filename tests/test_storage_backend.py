@@ -45,3 +45,13 @@ async def test_file_service_can_stream_from_non_local_backend():
     assert "remote.bin" in response.headers["content-disposition"]
     body = b"".join([chunk async for chunk in response.body_iterator])
     assert body == b"remote-content"
+
+
+def test_configured_storage_backend_can_be_s3(monkeypatch):
+    import vsem_fms.app.storage.dependencies as dependencies
+
+    sentinel = object()
+    monkeypatch.setattr(dependencies.settings, "STORAGE_BACKEND", "s3")
+    monkeypatch.setattr(dependencies, "S3StorageBackend", lambda: sentinel)
+
+    assert dependencies.get_storage_backend() is sentinel

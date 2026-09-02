@@ -5,7 +5,7 @@ services:
       dockerfile: vsem_fms/Dockerfile
       args:
         PYTHON_VER: "3.11"
-    image: vsem-fms:1.0.3
+    image: vsem-fms:1.1.0
     restart: unless-stopped
     init: true
     env_file:
@@ -23,7 +23,7 @@ services:
     stop_grace_period: 15s
 
   cleanup:
-    image: vsem-fms:1.0.3
+    image: vsem-fms:1.1.0
     restart: unless-stopped
     init: true
     env_file:
