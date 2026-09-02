@@ -135,3 +135,24 @@ def test_upload_rejects_reserved_and_blank_folder_segments(client):
             files={"file": ("hello.txt", b"hello")},
         )
         assert response.status_code == 422, segment
+
+
+def test_insufficient_disk_space_returns_507_and_preserves_existing_file(client, monkeypatch):
+    from types import SimpleNamespace
+    from vsem_fms.app.core import async_fs
+
+    assert upload(client, "important.txt", b"original").status_code == 201
+    monkeypatch.setattr(settings, "MIN_FREE_DISK_SPACE_MB", 1)
+    monkeypatch.setattr(
+        async_fs.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(total=1024 * 1024, used=1024 * 1024, free=0),
+    )
+
+    response = upload(client, "important.txt", b"replacement", overwrite=True)
+    assert response.status_code == 507
+
+    monkeypatch.setattr(settings, "MIN_FREE_DISK_SPACE_MB", 0)
+    response = client.get("/api/v1/files/user-1/project-1/important.txt")
+    assert response.status_code == 200
+    assert response.json()["content"] == "original"

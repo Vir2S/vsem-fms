@@ -16,12 +16,14 @@ class Settings(BaseSettings):
     STORAGE_PATH: str = "./storage"
     LOG_LEVEL: str = "INFO"
     LOG_DIR: str = "./logs"
+    MIN_FREE_DISK_SPACE_MB: int = Field(default=1024, ge=0)
     MAX_FILE_SIZE_MB: int = Field(
         default=100,
         gt=0,
         validation_alias=AliasChoices("MAX_FILE_SIZE_MB", "MAX_FILE_SIZE"),
     )
     MAX_FILE_AGE_HOURS: int = Field(default=168, gt=0)
+    CLEANUP_INTERVAL_SECONDS: int = Field(default=3600, gt=0)
     SERVER_PORT: int = Field(default=5000, ge=1, le=65535)
     SERVER_HOST: str = "0.0.0.0"
 
@@ -30,7 +32,7 @@ class Settings(BaseSettings):
         "This server handles File Management System for arbitrary files. "
         "It allows upload, retrieval, listing, and deletion via HTTP REST API."
     )
-    VERSION: str = "1.0.2"
+    VERSION: str = "1.0.3"
 
     CONTACT: dict[str, str] = {
         "name": "Born2CodeLab",

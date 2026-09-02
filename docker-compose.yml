@@ -5,7 +5,7 @@ services:
       dockerfile: vsem_fms/Dockerfile
       args:
         PYTHON_VER: "3.11"
-    image: vsem-fms:1.0.2
+    image: vsem-fms:1.0.3
     restart: unless-stopped
     init: true
     env_file:
@@ -21,3 +21,23 @@ services:
       - ./storage:/app/storage
       - ./logs:/app/logs
     stop_grace_period: 15s
+
+  cleanup:
+    image: vsem-fms:1.0.3
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    environment:
+      STORAGE_PATH: /app/storage
+      LOG_DIR: /app/logs
+      CLEANUP_INTERVAL_SECONDS: ${CLEANUP_INTERVAL_SECONDS:-3600}
+    volumes:
+      - ./storage:/app/storage
+      - ./logs:/app/logs
+    command: ["python", "-m", "vsem_fms.commands.cleanup"]
+    healthcheck:
+      disable: true
+    depends_on:
+      vsem-fms:
+        condition: service_healthy

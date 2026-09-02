@@ -21,6 +21,7 @@ async def test_cleanup_old_files_uses_configured_age(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "MAX_FILE_AGE_HOURS", 1)
 
     manager = AsyncFileManager()
-    await manager.cleanup_old_files()
+    deleted = await manager.cleanup_old_files()
 
+    assert deleted == 1
     assert not Path(old_file).exists()

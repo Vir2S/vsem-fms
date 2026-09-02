@@ -20,6 +20,7 @@ def api_key() -> str:
 def client(tmp_path, monkeypatch, api_key):
     monkeypatch.setattr(settings, "STORAGE_PATH", str(tmp_path / "storage"))
     monkeypatch.setattr(settings, "MAX_FILE_SIZE_MB", 100)
+    monkeypatch.setattr(settings, "MIN_FREE_DISK_SPACE_MB", 0)
     monkeypatch.setattr(settings, "MAX_FILE_AGE_HOURS", 168)
 
     with TestClient(app) as test_client:

@@ -1,5 +1,6 @@
 import hashlib
 import os
+import shutil
 import time
 import uuid
 from typing import Any
@@ -10,7 +11,11 @@ from fastapi import UploadFile
 from loguru import logger
 
 from vsem_fms.app.config import settings
-from vsem_fms.app.exceptions.file_exceptions import FileSizeError, FolderNotFoundError
+from vsem_fms.app.exceptions.file_exceptions import (
+    FileSizeError,
+    FolderNotFoundError,
+    InsufficientStorageError,
+)
 
 
 class AsyncFileManager:
@@ -78,6 +83,19 @@ class AsyncFileManager:
 
         raise FileNotFoundError(f"File {filename} not found")
 
+    async def _ensure_storage_capacity(self, directory: AsyncPath, incoming_bytes: int) -> None:
+        """Keep a configured amount of free disk space available during uploads."""
+        reserve_bytes = settings.MIN_FREE_DISK_SPACE_MB * 1024 * 1024
+        if reserve_bytes <= 0:
+            return
+
+        usage = await to_thread.run_sync(shutil.disk_usage, str(directory))
+        if usage.free - incoming_bytes < reserve_bytes:
+            raise InsufficientStorageError(
+                free_bytes=usage.free,
+                required_free_bytes=reserve_bytes + incoming_bytes,
+            )
+
     async def _write_file_stream(self, file: UploadFile, directory: AsyncPath) -> AsyncPath:
         """Write upload data to a temporary file and enforce the size limit."""
         await self._ensure_dir(directory)
@@ -92,6 +110,7 @@ class AsyncFileManager:
                     total_size += len(chunk)
                     if total_size > max_size:
                         raise FileSizeError(size=total_size, limit=max_size)
+                    await self._ensure_storage_capacity(directory, len(chunk))
                     await dest_file.write(chunk)
         except BaseException:
             if await temp_path.exists():
@@ -184,10 +203,11 @@ class AsyncFileManager:
 
         return sorted(files)
 
-    async def cleanup_old_files(self) -> None:
-        """Delete files older than MAX_FILE_AGE_HOURS recursively."""
+    async def cleanup_old_files(self) -> int:
+        """Delete files older than MAX_FILE_AGE_HOURS recursively and return the count."""
         await self._ensure_dir(self.base_dir)
         now = time.time()
+        deleted_count = 0
 
         async for file_path in self.base_dir.rglob("*"):
             if await file_path.is_file():
@@ -195,4 +215,7 @@ class AsyncFileManager:
                 age_hours = (now - modified_time) / 3600
                 if age_hours > settings.MAX_FILE_AGE_HOURS:
                     await file_path.unlink()
+                    deleted_count += 1
                     logger.info("Deleted old file: {}", file_path)
+
+        return deleted_count

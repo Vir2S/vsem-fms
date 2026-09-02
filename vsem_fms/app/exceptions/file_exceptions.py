@@ -58,3 +58,14 @@ class InvalidFileEncodingError(FileOperationError):
 class UnsupportedFileTypeError(FileOperationError):
     def __init__(self, detail: str = "Unsupported file type."):
         super().__init__(detail)
+
+
+class InsufficientStorageError(FileOperationError):
+    def __init__(self, free_bytes: int, required_free_bytes: int):
+        super().__init__(
+            "Insufficient storage space: "
+            f"{round(free_bytes / 1024 / 1024, 2)}MB free, "
+            f"at least {round(required_free_bytes / 1024 / 1024, 2)}MB must remain."
+        )
+        self.free_bytes = free_bytes
+        self.required_free_bytes = required_free_bytes

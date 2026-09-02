@@ -25,7 +25,9 @@ Set a strong API key in `.env` before starting the service. `API_KEY` has no def
 API_KEY=replace-with-a-long-random-secret
 STORAGE_PATH=./storage
 MAX_FILE_SIZE_MB=100
+MIN_FREE_DISK_SPACE_MB=1024
 MAX_FILE_AGE_HOURS=168
+CLEANUP_INTERVAL_SECONDS=3600
 LOG_LEVEL=INFO
 LOG_DIR=./logs
 SERVER_HOST=0.0.0.0
@@ -122,7 +124,7 @@ docker compose ps
 docker compose logs -f vsem-fms
 ```
 
-Persistent files and logs are bind-mounted to `./storage` and `./logs`. The image health check uses `/api/v1/ping`, and the service restarts automatically unless it is explicitly stopped.
+Persistent files and logs are bind-mounted to `./storage` and `./logs`. A dedicated cleanup service periodically removes files older than `MAX_FILE_AGE_HOURS`, while uploads preserve at least `MIN_FREE_DISK_SPACE_MB` of free disk space. The image health check uses `/api/v1/ping`, and the service restarts automatically unless it is explicitly stopped.
 
 Stop the service:
 
