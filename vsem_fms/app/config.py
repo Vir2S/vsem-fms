@@ -54,7 +54,7 @@ class Settings(BaseSettings):
         "This server handles File Management System for arbitrary files. "
         "It allows upload, retrieval, listing, and deletion via HTTP REST API."
     )
-    VERSION: str = "1.0.3"
+    VERSION: str = "1.1.0"
 
     CONTACT: dict[str, str] = {
         "name": "Born2CodeLab",

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-02
+
 ### Added
 
 - Added file metadata endpoints with `size`, `content_type`, `modified_at`, and streaming SHA-256 checksums, plus `HEAD` support with metadata headers and ETags.
@@ -13,6 +15,7 @@
 
 ### Changed
 
+- Version bumped to `1.1.0`.
 - Refactored storage access behind a pluggable `StorageBackend` contract and moved local filesystem behavior into `LocalStorageBackend`, keeping the existing HTTP API unchanged.
 - Added backend-neutral download handling so remote/object-storage backends can stream data without requiring route or service-layer rewrites.
 - Preserved the existing single `API_KEY` as a backward-compatible legacy admin credential while allowing deployments to opt into the new scoped `API_KEYS` registry.
