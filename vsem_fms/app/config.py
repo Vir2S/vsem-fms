@@ -1,5 +1,9 @@
-from pydantic import AliasChoices, Field
+from typing import Literal
+
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from vsem_fms.app.core.api_keys import APIKeyConfig
 
 
 class Settings(BaseSettings):
@@ -12,9 +16,13 @@ class Settings(BaseSettings):
         case_sensitive=True,
     )
 
-    API_KEY: str = Field(min_length=16)
+    # API_KEY is the backward-compatible single-key setting. New deployments can
+    # use API_KEYS with hashed, scoped credentials instead.
+    API_KEY: str | None = Field(default=None, min_length=16)
+    API_KEYS: list[APIKeyConfig] = Field(default_factory=list)
     STORAGE_PATH: str = "./storage"
     LOG_LEVEL: str = "INFO"
+    LOG_FORMAT: Literal["json", "text"] = "json"
     LOG_DIR: str = "./logs"
     MIN_FREE_DISK_SPACE_MB: int = Field(default=1024, ge=0)
     MAX_FILE_SIZE_MB: int = Field(
@@ -43,6 +51,27 @@ class Settings(BaseSettings):
         "name": "MIT License",
         "url": "https://opensource.org/licenses/MIT",
     }
+
+    @field_validator("API_KEY", mode="before")
+    @classmethod
+    def normalize_legacy_api_key(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @model_validator(mode="after")
+    def validate_api_credentials(self) -> "Settings":
+        if self.API_KEY is None and not self.API_KEYS:
+            raise ValueError("Configure API_KEY or at least one API_KEYS credential")
+
+        key_ids = [item.id for item in self.API_KEYS]
+        if len(key_ids) != len(set(key_ids)):
+            raise ValueError("API_KEYS ids must be unique")
+
+        secret_hashes = [item.secret_hash for item in self.API_KEYS]
+        if len(secret_hashes) != len(set(secret_hashes)):
+            raise ValueError("API_KEYS secret_hash values must be unique")
+        return self
 
 
 settings = Settings()

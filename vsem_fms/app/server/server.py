@@ -6,7 +6,7 @@ from vsem_fms.app.constants import DOCS_URL, OPENAPI_URL, REDOC_URL, ROOT_API
 from vsem_fms.app.core.logging import logger
 from vsem_fms.app.middlewares.log_requests_middleware import log_requests_middleware
 from vsem_fms.app.middlewares.slash_trailing_middleware import trailing_slash_handler_middleware
-from vsem_fms.app.routes import delete, get_file, get_files_list, ping, upload
+from vsem_fms.app.routes import delete, get_file, get_files_list, metadata, ping, upload
 
 
 class Server:
@@ -36,7 +36,7 @@ class Server:
         app.middleware("http")(log_requests_middleware)
 
     def _register_routes(self, app: FastAPI) -> None:
-        for router in [upload.router, get_files_list.router, get_file.router, delete.router, ping.router]:
+        for router in [upload.router, metadata.router, get_files_list.router, get_file.router, delete.router, ping.router]:
             app.include_router(router, prefix=ROOT_API)
 
     def run_server(self, port: int | None = None, host: str | None = None) -> None:

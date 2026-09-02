@@ -3,13 +3,13 @@ import asyncio
 from loguru import logger
 
 from vsem_fms.app.config import settings
-from vsem_fms.app.core.async_fs import AsyncFileManager
+from vsem_fms.app.storage.dependencies import get_storage_backend
 from vsem_fms.app.core.logging import setup_logging
 
 
 async def run_cleanup_loop() -> None:
     """Run retention cleanup forever using the configured interval."""
-    manager = AsyncFileManager()
+    manager = get_storage_backend()
     while True:
         try:
             deleted = await manager.cleanup_old_files()

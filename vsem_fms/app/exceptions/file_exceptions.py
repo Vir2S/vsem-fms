@@ -30,6 +30,11 @@ class InvalidFileNameError(FileOperationError):
         super().__init__(f"Invalid file name: {file_name!r}.")
 
 
+class InvalidCursorError(FileOperationError):
+    def __init__(self):
+        super().__init__("Invalid pagination cursor.")
+
+
 class FileWriteError(FileOperationError):
     def __init__(self, path: str):
         super().__init__(f"Failed to write file: {path}")

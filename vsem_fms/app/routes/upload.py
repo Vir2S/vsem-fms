@@ -2,7 +2,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
-from vsem_fms.app.core.auth import get_api_key
+from vsem_fms.app.core.api_keys import APIPrincipal, APIScope
+from vsem_fms.app.core.auth import authorize_folder_access, require_scope
 from vsem_fms.app.exceptions.file_exceptions import (
     FileAlreadyExistsError,
     FileSizeError,
@@ -22,9 +23,10 @@ router = APIRouter(prefix="/files", tags=["Files"])
     summary="Upload a file",
     description="Upload a file to the specified logical folder and subfolder.",
     response_model=UploadResponse,
-    dependencies=[Depends(get_api_key)],
     status_code=status.HTTP_201_CREATED,
     responses={
+        401: {"description": "Unauthorized"},
+        403: {"description": "Forbidden"},
         400: {"description": "Invalid filename or file exceeds size limit."},
         409: {"description": "File already exists."},
         507: {"description": "Insufficient storage space."},
@@ -33,10 +35,17 @@ router = APIRouter(prefix="/files", tags=["Files"])
     },
 )
 async def upload_file(
+    principal: Annotated[APIPrincipal, Depends(require_scope(APIScope.FILES_WRITE))],
     file_service: Annotated[FileService, Depends(FileService)],
     upload_request: Annotated[UploadRequest, Depends(UploadRequest.as_form)],
     file: Annotated[UploadFile, File(description="The file to upload")],
 ) -> UploadResponse:
+    authorize_folder_access(
+        principal,
+        APIScope.FILES_WRITE,
+        folder=upload_request.folder,
+        subfolder=upload_request.subfolder,
+    )
     try:
         saved_path = await file_service.upload_file(file=file, upload_data=upload_request)
         return UploadResponse(message="File uploaded successfully.", path=saved_path)

@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Added file metadata endpoints with `size`, `content_type`, `modified_at`, and streaming SHA-256 checksums, plus `HEAD` support with metadata headers and ETags.
+- Added cursor-based pagination for filename and metadata listings with `limit`, opaque cursors, `has_more`, and `next_cursor`, while preserving the legacy unpaginated response shape when pagination parameters are omitted.
+- Added request correlation through `X-Request-ID`, structured JSON/text logging, request duration/status/response-size fields, and propagation of request context into internal service logs.
+- Added scoped multi-key API authentication with hashed key registries, per-key enable/disable state, `files:read`, `files:write`, `files:delete`, `files:list`, and `admin` scopes, optional folder-prefix restrictions, and client identity in request logs.
+- Added an API-key generation/hash CLI for provisioning multi-key credentials without requiring the application settings to start first.
+
+### Changed
+
+- Refactored storage access behind a pluggable `StorageBackend` contract and moved local filesystem behavior into `LocalStorageBackend`, keeping the existing HTTP API unchanged.
+- Added backend-neutral download handling so future remote/object-storage backends can stream data without requiring route or service-layer rewrites.
+- Preserved the existing single `API_KEY` as a backward-compatible legacy admin credential while allowing deployments to opt into the new scoped `API_KEYS` registry.
+
+### Security
+
+- Invalid or disabled API keys now return HTTP `401 Unauthorized`; authenticated keys that lack the required scope or folder access return HTTP `403 Forbidden`.
+- New multi-key credentials are configured and matched by SHA-256 hash rather than storing their plaintext secrets in the key registry.
+
 ## [1.0.3] - 2026-09-02
 
 ### Added
