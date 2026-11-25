@@ -32,7 +32,7 @@ class FakeS3Client:
         pairs = [item.split("=", 1) for item in value.split("&") if "=" in item]
         return {key: val for key, val in pairs}
 
-    def put_object(self, *, Bucket, Key, Body, ContentType, Tagging=None, IfNoneMatch=None):
+    def put_object(self, *, Bucket, Key, Body, ContentType, Tagging=None, IfNoneMatch=None, Metadata=None):
         if IfNoneMatch == "*" and Key in self.objects:
             raise ClientError({"Error": {"Code": "PreconditionFailed"}}, "PutObject")
         self.objects[Key] = {
@@ -40,6 +40,7 @@ class FakeS3Client:
             "content_type": ContentType,
             "last_modified": datetime.now(timezone.utc),
             "tags": self._tags_from_query(Tagging),
+            "metadata": dict(Metadata or {}),
         }
         return {"ETag": '"put-etag"'}
 
@@ -51,6 +52,7 @@ class FakeS3Client:
             "ContentLength": len(item["body"]),
             "ContentType": item["content_type"],
             "LastModified": item["last_modified"],
+            "Metadata": dict(item.get("metadata", {})),
         }
 
     def get_object(self, *, Bucket, Key):
@@ -62,6 +64,7 @@ class FakeS3Client:
             "ContentLength": len(item["body"]),
             "ContentType": item["content_type"],
             "LastModified": item["last_modified"],
+            "Metadata": dict(item.get("metadata", {})),
         }
 
     def delete_object(self, *, Bucket, Key):
@@ -87,12 +90,13 @@ class FakeS3Client:
             ]
         }
 
-    def create_multipart_upload(self, *, Bucket, Key, ContentType):
+    def create_multipart_upload(self, *, Bucket, Key, ContentType, Metadata=None):
         upload_id = f"upload-{self._next_upload}"
         self._next_upload += 1
         self.multipart[upload_id] = {
             "key": Key,
             "content_type": ContentType,
+            "metadata": dict(Metadata or {}),
             "parts": {},
         }
         return {"UploadId": upload_id}
@@ -110,6 +114,7 @@ class FakeS3Client:
         self.objects[Key] = {
             "body": body,
             "content_type": upload["content_type"],
+            "metadata": upload["metadata"],
             "last_modified": datetime.now(timezone.utc),
             "tags": {},
         }
@@ -162,7 +167,7 @@ class RaceOnPutS3Client(FakeS3Client):
         super().__init__()
         self.inject_on_put = True
 
-    def put_object(self, *, Bucket, Key, Body, ContentType, Tagging=None, IfNoneMatch=None):
+    def put_object(self, *, Bucket, Key, Body, ContentType, Tagging=None, IfNoneMatch=None, Metadata=None):
         if self.inject_on_put and IfNoneMatch == "*":
             self.inject_on_put = False
             self.objects[Key] = {
@@ -178,6 +183,7 @@ class RaceOnPutS3Client(FakeS3Client):
             ContentType=ContentType,
             Tagging=Tagging,
             IfNoneMatch=IfNoneMatch,
+            Metadata=Metadata,
         )
 
 
@@ -260,7 +266,7 @@ async def test_s3_large_upload_uses_multipart_and_preserves_sha256(s3_backend):
 
 
 @pytest.mark.anyio
-async def test_s3_oversized_multipart_upload_is_aborted(s3_backend, monkeypatch):
+async def test_s3_oversized_multipart_upload_is_rejected_before_initiation(s3_backend, monkeypatch):
     backend, client = s3_backend
     monkeypatch.setattr(settings, "MAX_FILE_SIZE_MB", 6)
     content = b"z" * (7 * 1024 * 1024)
@@ -268,7 +274,9 @@ async def test_s3_oversized_multipart_upload_is_aborted(s3_backend, monkeypatch)
     with pytest.raises(FileSizeError):
         await backend.save_file(_upload_file("too-large.bin", content), "tenant", "project")
 
-    assert client.aborted_uploads == ["upload-1"]
+    assert client.aborted_uploads == []
+    assert client.multipart == {}
+    assert client._next_upload == 1
     assert client.objects == {}
 
 
@@ -335,12 +343,14 @@ async def test_s3_overwrite_false_is_race_safe_for_small_objects(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_s3_metadata_falls_back_to_stream_hash_when_tag_is_missing(s3_backend):
+async def test_s3_metadata_falls_back_to_stream_hash_when_metadata_is_missing(s3_backend):
     backend, client = s3_backend
     content = b"external-object-without-tag"
     await backend.save_file(_upload_file("external.bin", content), "tenant", "project")
     key = next(key for key in client.objects if key.endswith("/external.bin"))
-    client.objects[key]["tags"] = {}
+    client.objects[key]["metadata"] = {}
+    # Old tags may be stale even when they look like valid digests.
+    client.objects[key]["tags"] = {"sha256": hashlib.sha256(b"wrong object").hexdigest()}
 
     metadata = await backend.get_file_metadata("tenant", "project", "external.bin")
 
@@ -513,3 +523,156 @@ async def test_cleanup_worker_closes_owned_pool_on_cancellation(monkeypatch):
             await task
     builder.assert_called_once_with()
     sdk.close.assert_called_once_with()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("second_is_multipart", [False, True])
+async def test_s3_concurrent_overwrites_publish_matching_checksum(s3_backend, monkeypatch, second_is_multipart):
+    import asyncio
+    from unittest.mock import Mock
+
+    backend, sdk = s3_backend
+    first = b"a" * (6 * 1024 * 1024)
+    second = b"b" * (7 * 1024 * 1024) if second_is_multipart else b"new"
+    committed = asyncio.Event()
+    resume = asyncio.Event()
+    original_call = backend._call
+    first_complete = True
+
+    async def interleaved_call(method_name, **kwargs):
+        nonlocal first_complete
+        result = await original_call(method_name, **kwargs)
+        if method_name == "complete_multipart_upload" and first_complete:
+            first_complete = False
+            committed.set()
+            await resume.wait()
+        return result
+
+    monkeypatch.setattr(backend, "_call", interleaved_call)
+    sdk.put_object_tagging = Mock(side_effect=AssertionError("No post-commit tagging"))
+    sdk.get_object_tagging = Mock(side_effect=AssertionError("No legacy tag reads"))
+    task = asyncio.create_task(backend.save_file(_upload_file("race.bin", first), "tenant", "project"))
+    try:
+        await asyncio.wait_for(committed.wait(), timeout=5)
+        initial = await backend.get_file_metadata("tenant", "project", "race.bin")
+        assert initial["sha256"] == hashlib.sha256(first).hexdigest()
+        await backend.save_file(_upload_file("race.bin", second), "tenant", "project")
+    finally:
+        resume.set()
+        await asyncio.wait_for(task, timeout=5)
+    metadata = await backend.get_file_metadata("tenant", "project", "race.bin")
+    assert metadata["size"] == len(second)
+    assert metadata["sha256"] == hashlib.sha256(second).hexdigest()
+    assert await backend.read_file("tenant", "project", "race.bin") == second
+    sdk.put_object_tagging.assert_not_called()
+    sdk.get_object_tagging.assert_not_called()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("large", [False, True])
+async def test_s3_new_metadata_uses_head_without_downloading(s3_backend, monkeypatch, large):
+    from unittest.mock import Mock
+
+    backend, sdk = s3_backend
+    content = b"x" * (6 * 1024 * 1024) if large else b"small"
+    await backend.save_file(_upload_file("object.bin", content), "tenant", "project")
+    monkeypatch.setattr(sdk, "get_object", Mock(side_effect=AssertionError("Unexpected body download")))
+    monkeypatch.setattr(sdk, "get_object_tagging", Mock(side_effect=AssertionError("Unexpected tag read")))
+    metadata = await backend.get_file_metadata("tenant", "project", "object.bin")
+    assert metadata["sha256"] == hashlib.sha256(content).hexdigest()
+    assert sdk.objects[next(iter(sdk.objects))]["metadata"]["sha256"] == metadata["sha256"]
+
+
+@pytest.mark.anyio
+async def test_s3_legacy_metadata_uses_single_get_snapshot_on_overwrite(s3_backend, monkeypatch):
+    backend, sdk = s3_backend
+    await backend.save_file(_upload_file("old.bin", b"old"), "tenant", "project")
+    key = next(iter(sdk.objects))
+    sdk.objects[key]["metadata"] = {}
+    original_head = sdk.head_object
+    modified = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    newer = b"new object with different length"
+
+    def racing_head(**kwargs):
+        old = original_head(**kwargs)
+        sdk.objects[key] = {
+            "body": newer,
+            "content_type": "application/pdf",
+            "last_modified": modified,
+            "metadata": {},
+            "tags": {"sha256": hashlib.sha256(b"old").hexdigest()},
+        }
+        return old
+
+    monkeypatch.setattr(sdk, "head_object", racing_head)
+    metadata = await backend.get_file_metadata("tenant", "project", "old.bin")
+    assert metadata == {
+        "filename": "old.bin",
+        "size": len(newer),
+        "content_type": "application/pdf",
+        "modified_at": "2026-01-02T03:04:05Z",
+        "sha256": hashlib.sha256(newer).hexdigest(),
+    }
+
+
+@pytest.mark.anyio
+async def test_s3_multipart_source_change_aborts_and_preserves_existing_object(s3_backend, monkeypatch):
+    backend, sdk = s3_backend
+    await backend.save_file(_upload_file("same.bin", b"original"), "tenant", "project")
+    upload = _upload_file("same.bin", b"x" * (6 * 1024 * 1024))
+    original_seek = upload.seek
+
+    async def mutate_on_rewind(offset):
+        upload.file.seek(offset)
+        upload.file.write(b"y")
+        await original_seek(offset)
+
+    monkeypatch.setattr(upload, "seek", mutate_on_rewind)
+    with pytest.raises(OSError, match="Upload content changed"):
+        await backend.save_file(upload, "tenant", "project")
+    assert sdk.aborted_uploads == ["upload-1"]
+    assert sdk.multipart == {}
+    assert await backend.read_file("tenant", "project", "same.bin") == b"original"
+
+
+@pytest.mark.anyio
+async def test_s3_multipart_part_failure_aborts_and_preserves_existing_object(s3_backend, monkeypatch):
+    backend, sdk = s3_backend
+    await backend.save_file(_upload_file("same.bin", b"original"), "tenant", "project")
+
+    def failing_part(**kwargs):
+        raise ClientError({"Error": {"Code": "InternalError"}}, "UploadPart")
+
+    monkeypatch.setattr(sdk, "upload_part", failing_part)
+    with pytest.raises(OSError, match="S3 multipart upload failed"):
+        await backend.save_file(_upload_file("same.bin", b"x" * (6 * 1024 * 1024)), "tenant", "project")
+    assert sdk.aborted_uploads == ["upload-1"]
+    assert sdk.multipart == {}
+    assert await backend.read_file("tenant", "project", "same.bin") == b"original"
+
+
+@pytest.mark.anyio
+async def test_s3_multipart_conditional_commit_preserves_concurrent_writer(s3_backend, monkeypatch):
+    backend, sdk = s3_backend
+    original_complete = sdk.complete_multipart_upload
+    concurrent = b"concurrent writer"
+
+    def racing_complete(**kwargs):
+        sdk.put_object(
+            Bucket=kwargs["Bucket"], Key=kwargs["Key"], Body=concurrent,
+            ContentType="application/octet-stream",
+            Metadata={"sha256": hashlib.sha256(concurrent).hexdigest()},
+        )
+        return original_complete(**kwargs)
+
+    monkeypatch.setattr(sdk, "complete_multipart_upload", racing_complete)
+    with pytest.raises(FileExistsError):
+        await backend.save_file(
+            _upload_file("race.bin", b"x" * (6 * 1024 * 1024)),
+            "tenant", "project", overwrite=False,
+        )
+    assert sdk.multipart == {}
+    assert sdk.aborted_uploads == ["upload-1"]
+    assert await backend.read_file("tenant", "project", "race.bin") == concurrent
+    metadata = await backend.get_file_metadata("tenant", "project", "race.bin")
+    assert metadata["sha256"] == hashlib.sha256(concurrent).hexdigest()

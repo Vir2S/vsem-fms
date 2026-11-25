@@ -17,7 +17,7 @@ from vsem_fms.app.exceptions.file_exceptions import FileSizeError, FolderNotFoun
 from vsem_fms.app.storage.base import StorageBackend, StorageDownload
 
 
-_SHA256_TAG = "sha256"
+_SHA256_METADATA_KEY = "sha256"
 _NOT_FOUND_CODES = {"404", "NoSuchKey", "NotFound"}
 _PRECONDITION_FAILED_CODES = {"412", "PreconditionFailed"}
 
@@ -138,19 +138,6 @@ class S3StorageBackend(StorageBackend):
         finally:
             await self._close_body(body)
 
-    async def _set_sha256_tag(self, key: str, digest: str) -> None:
-        try:
-            await self._call(
-                "put_object_tagging",
-                Bucket=self.bucket,
-                Key=key,
-                Tagging={"TagSet": [{"Key": _SHA256_TAG, "Value": digest}]},
-            )
-        except ClientError:
-            # The file is already safely stored. Metadata can still calculate the
-            # digest by streaming the object when tagging permissions are absent.
-            logger.warning("Could not persist SHA-256 tag for S3 object '{}'", key)
-
     async def _read_upload_chunk(self, file: UploadFile, size: int, digest: Any, total: int) -> tuple[bytes, int]:
         chunk = await file.read(size)
         if not chunk:
@@ -176,7 +163,7 @@ class S3StorageBackend(StorageBackend):
             "Key": key,
             "Body": body,
             "ContentType": content_type,
-            "Tagging": f"{_SHA256_TAG}={digest}",
+            "Metadata": {_SHA256_METADATA_KEY: digest},
         }
         if not overwrite:
             kwargs["IfNoneMatch"] = "*"
@@ -192,12 +179,14 @@ class S3StorageBackend(StorageBackend):
         digest: Any,
         total_size: int,
         overwrite: bool,
-    ) -> str:
+        expected_sha256: str,
+    ) -> None:
         created = await self._call(
             "create_multipart_upload",
             Bucket=self.bucket,
             Key=key,
             ContentType=content_type,
+            Metadata={_SHA256_METADATA_KEY: expected_sha256},
         )
         upload_id = created["UploadId"]
         parts: list[dict[str, Any]] = []
@@ -241,6 +230,10 @@ class S3StorageBackend(StorageBackend):
                 )
                 parts.append({"ETag": uploaded["ETag"], "PartNumber": part_number})
 
+            # Never publish an object if the source changed after pre-hashing.
+            if digest.hexdigest() != expected_sha256:
+                raise OSError("Upload content changed during multipart transfer")
+
             complete_kwargs: dict[str, Any] = {
                 "Bucket": self.bucket,
                 "Key": key,
@@ -261,10 +254,6 @@ class S3StorageBackend(StorageBackend):
             except Exception:
                 logger.exception("Failed to abort S3 multipart upload for '{}'", key)
             raise
-
-        sha256 = digest.hexdigest()
-        await self._set_sha256_tag(key, sha256)
-        return sha256
 
     async def save_file(
         self,
@@ -310,6 +299,20 @@ class S3StorageBackend(StorageBackend):
                 return
             initial.extend(chunk)
 
+        # Multipart object metadata must be supplied at initiation. UploadFile
+        # is already spooled by Starlette, so pre-hash the remaining bytes and
+        # rewind without allocating a second full-file buffer. Keep the initial
+        # digest for verification during the actual transfer.
+        expected_digest = digest.copy()
+        checked_size = total_size
+        while True:
+            chunk, checked_size = await self._read_upload_chunk(
+                file, self.multipart_chunk_size, expected_digest, checked_size
+            )
+            if not chunk:
+                break
+        await file.seek(total_size)
+
         try:
             await self._multipart_upload(
                 file=file,
@@ -319,6 +322,7 @@ class S3StorageBackend(StorageBackend):
                 digest=digest,
                 total_size=total_size,
                 overwrite=overwrite,
+                expected_sha256=expected_digest.hexdigest(),
             )
         except FileSizeError:
             raise
@@ -422,25 +426,14 @@ class S3StorageBackend(StorageBackend):
         names = [str(item["Key"])[len(prefix) :] for item in objects]
         return names[:limit], len(names) > limit
 
-    async def _get_sha256_tag(self, key: str) -> str | None:
-        try:
-            response = await self._call("get_object_tagging", Bucket=self.bucket, Key=key)
-        except ClientError:
-            return None
-        for tag in response.get("TagSet", []):
-            if tag.get("Key") == _SHA256_TAG:
-                value = str(tag.get("Value", ""))
-                if len(value) == 64 and all(char in "0123456789abcdef" for char in value.lower()):
-                    return value.lower()
+    @staticmethod
+    def _metadata_sha256(response: dict[str, Any]) -> str | None:
+        value = str((response.get("Metadata") or {}).get(_SHA256_METADATA_KEY, ""))
+        if len(value) == 64 and all(char in "0123456789abcdef" for char in value.lower()):
+            return value.lower()
         return None
 
-    async def _calculate_sha256(self, key: str) -> str:
-        tagged = await self._get_sha256_tag(key)
-        if tagged:
-            return tagged
-
-        response = await self._get_object(key)
-        body = response["Body"]
+    async def _calculate_body_sha256(self, body: Any) -> str:
         digest = hashlib.sha256()
         try:
             while True:
@@ -470,12 +463,19 @@ class S3StorageBackend(StorageBackend):
             if self._is_not_found(exc):
                 raise FileNotFoundError(key) from exc
             raise
+        sha256 = self._metadata_sha256(head)
+        if sha256 is None:
+            # Legacy tags may have been attached to the wrong object by an
+            # older writer. Use one GET snapshot for both bytes and metadata;
+            # mixing the previous HEAD with this GET would introduce a race.
+            head = await self._get_object(key)
+            sha256 = await self._calculate_body_sha256(head["Body"])
         return {
             "filename": filename,
             "size": int(head.get("ContentLength", 0)),
             "content_type": head.get("ContentType") or mimetypes.guess_type(filename)[0] or "application/octet-stream",
             "modified_at": self._format_modified_at(head["LastModified"]),
-            "sha256": await self._calculate_sha256(key),
+            "sha256": sha256,
         }
 
     async def list_file_metadata(self, folder: str, subfolder: str) -> list[dict[str, object]]:

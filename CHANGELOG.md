@@ -2,9 +2,15 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Run CI on pull requests only, removing the separate push trigger to avoid duplicate checks.
+
 ### Fixed
 
 - Reuse one S3 SDK client and configurable HTTP connection pool per API worker, and close owned clients during API and cleanup worker shutdown.
+
+- Publish S3 SHA-256 checksums atomically with object contents, verify multipart digests before completion, and derive legacy checksums from a consistent streamed object snapshot instead of mutable tags.
 
 ## [1.1.0] - 2026-09-02
 
