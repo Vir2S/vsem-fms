@@ -123,3 +123,16 @@ def test_s3_can_use_default_aws_credential_chain(monkeypatch):
     assert configured.STORAGE_BACKEND == "s3"
     assert configured.S3_BUCKET == "bucket"
     assert configured.S3_ACCESS_KEY is None
+
+
+def test_s3_pool_size_configuration(monkeypatch):
+    import pytest
+    from pydantic import ValidationError
+
+    monkeypatch.delenv("S3_MAX_POOL_CONNECTIONS", raising=False)
+    assert Settings(_env_file=None).S3_MAX_POOL_CONNECTIONS == 32
+    monkeypatch.setenv("S3_MAX_POOL_CONNECTIONS", "64")
+    assert Settings(_env_file=None).S3_MAX_POOL_CONNECTIONS == 64
+    monkeypatch.setenv("S3_MAX_POOL_CONNECTIONS", "0")
+    with pytest.raises(ValidationError, match="S3_MAX_POOL_CONNECTIONS"):
+        Settings(_env_file=None)

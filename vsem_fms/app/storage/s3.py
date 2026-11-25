@@ -31,13 +31,23 @@ class S3StorageBackend(StorageBackend):
         self.multipart_threshold = settings.S3_MULTIPART_THRESHOLD_MB * 1024 * 1024
         self.multipart_chunk_size = settings.S3_MULTIPART_CHUNK_SIZE_MB * 1024 * 1024
         self.download_chunk_size = settings.S3_DOWNLOAD_CHUNK_SIZE_KB * 1024
-        self.client = client or self._build_client()
+        self._owns_client = client is None
+        self.client = self._build_client() if client is None else client
+
+    async def aclose(self) -> None:
+        """Close the owned SDK connection pool without blocking the event loop."""
+        if self._owns_client:
+            await to_thread.run_sync(self.client.close)
+            self._owns_client = False
 
     @staticmethod
     def _build_client() -> Any:
         client_kwargs: dict[str, Any] = {
             "service_name": "s3",
-            "config": Config(s3={"addressing_style": settings.S3_ADDRESSING_STYLE}),
+            "config": Config(
+                s3={"addressing_style": settings.S3_ADDRESSING_STYLE},
+                max_pool_connections=settings.S3_MAX_POOL_CONNECTIONS,
+            ),
             "verify": settings.S3_VERIFY_SSL,
         }
         if settings.S3_ENDPOINT_URL:

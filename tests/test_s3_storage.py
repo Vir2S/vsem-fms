@@ -364,6 +364,7 @@ def test_s3_client_builder_passes_provider_configuration(monkeypatch):
     monkeypatch.setattr(settings, "S3_SESSION_TOKEN", "token")
     monkeypatch.setattr(settings, "S3_ADDRESSING_STYLE", "path")
     monkeypatch.setattr(settings, "S3_VERIFY_SSL", False)
+    monkeypatch.setattr(settings, "S3_MAX_POOL_CONNECTIONS", 48)
     monkeypatch.setattr(s3_module.boto3, "client", fake_boto_client)
 
     S3StorageBackend()
@@ -376,6 +377,7 @@ def test_s3_client_builder_passes_provider_configuration(monkeypatch):
     assert captured["aws_session_token"] == "token"
     assert captured["verify"] is False
     assert captured["config"].s3["addressing_style"] == "path"
+    assert captured["config"].max_pool_connections == 48
 
 
 def test_s3_backend_round_trip_through_public_http_api(client, s3_backend):
@@ -413,3 +415,101 @@ def test_s3_backend_round_trip_through_public_http_api(client, s3_backend):
         assert client.get("/api/v1/files/tenant/project/remote.bin").status_code == 404
     finally:
         app.dependency_overrides.pop(get_storage_backend, None)
+
+
+def test_s3_pool_reused_across_requests_and_closed_on_shutdown(monkeypatch, api_key):
+    from fastapi.testclient import TestClient
+    from unittest.mock import Mock
+
+    from vsem_fms.app.main import app
+
+    clients = []
+
+    def build_client():
+        sdk = FakeS3Client()
+        sdk.close = Mock()
+        clients.append(sdk)
+        return sdk
+
+    monkeypatch.setattr(settings, "STORAGE_BACKEND", "s3")
+    monkeypatch.setattr(settings, "S3_BUCKET", "test-bucket")
+    monkeypatch.setattr(S3StorageBackend, "_build_client", staticmethod(build_client))
+    headers = {"X-API-Key": api_key}
+
+    for cycle in range(2):
+        with TestClient(app) as client:
+            backend = app.state.storage_backend
+            assert len(clients) == cycle + 1
+            assert backend.client is clients[-1]
+            response = client.post(
+                "/api/v1/files",
+                headers=headers,
+                data={"folder": "tenant", "subfolder": "project"},
+                files={"file": ("shared.bin", b"shared pool")},
+            )
+            assert response.status_code == 201
+            listing = client.get("/api/v1/files/tenant/project", headers=headers)
+            assert listing.json() == {"files": ["shared.bin"]}
+            downloaded = client.get("/api/v1/files/tenant/project/shared.bin", headers=headers)
+            assert downloaded.content == b"shared pool"
+            assert app.state.storage_backend is backend
+            assert len(clients) == cycle + 1
+            clients[-1].close.assert_not_called()
+        clients[-1].close.assert_called_once_with()
+        assert not hasattr(app.state, "storage_backend")
+
+
+def test_local_lifespan_does_not_build_s3_client(monkeypatch):
+    from unittest.mock import Mock
+    from fastapi.testclient import TestClient
+
+    from vsem_fms.app.main import app
+
+    monkeypatch.setattr(settings, "STORAGE_BACKEND", "local")
+    builder = Mock(side_effect=AssertionError("Local storage must not initialize S3"))
+    monkeypatch.setattr(S3StorageBackend, "_build_client", builder)
+    with TestClient(app) as client:
+        assert client.get("/api/v1/ping").status_code == 200
+    builder.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_s3_backend_does_not_close_borrowed_client(s3_backend):
+    from unittest.mock import Mock
+
+    backend, sdk = s3_backend
+    sdk.close = Mock()
+    await backend.aclose()
+    sdk.close.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_cleanup_worker_closes_owned_pool_on_cancellation(monkeypatch):
+    import asyncio
+    from unittest.mock import Mock
+
+    from vsem_fms.commands.cleanup import run_cleanup_loop
+
+    sdk = FakeS3Client()
+    sdk.close = Mock()
+    builder = Mock(return_value=sdk)
+    reached_cleanup = asyncio.Event()
+
+    async def cleanup(self):
+        reached_cleanup.set()
+        return 0
+
+    monkeypatch.setattr(settings, "STORAGE_BACKEND", "s3")
+    monkeypatch.setattr(settings, "S3_BUCKET", "test-bucket")
+    monkeypatch.setattr(S3StorageBackend, "_build_client", builder)
+    monkeypatch.setattr(S3StorageBackend, "cleanup_old_files", cleanup)
+    task = asyncio.create_task(run_cleanup_loop())
+    try:
+        await asyncio.wait_for(reached_cleanup.wait(), timeout=5)
+        sdk.close.assert_not_called()
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    builder.assert_called_once_with()
+    sdk.close.assert_called_once_with()
