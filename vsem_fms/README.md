@@ -215,7 +215,10 @@ Relevant settings:
 S3_MULTIPART_THRESHOLD_MB=8
 S3_MULTIPART_CHUNK_SIZE_MB=8
 S3_DOWNLOAD_CHUNK_SIZE_KB=1024
+S3_MAX_POOL_CONNECTIONS=32
 ```
+
+The API shares one S3 SDK client and HTTP connection pool per application worker. The cleanup process owns a separate client. Both close their owned pools on graceful shutdown. `S3_MAX_POOL_CONNECTIONS` controls the number of connections retained in each SDK pool (default: 32); it is not a concurrency or rate limit. Changes to S3 settings require restarting the affected processes. ASGI hosts must run application lifespan events when S3 is enabled.
 
 `MIN_FREE_DISK_SPACE_MB` protects only the local filesystem backend and is ignored by S3 storage.
 

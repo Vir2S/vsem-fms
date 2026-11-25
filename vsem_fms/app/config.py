@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     S3_PREFIX: str = "vsem-fms"
     S3_ADDRESSING_STYLE: Literal["auto", "path", "virtual"] = "auto"
     S3_VERIFY_SSL: bool = True
+    S3_MAX_POOL_CONNECTIONS: int = Field(default=32, ge=1)
     S3_MULTIPART_THRESHOLD_MB: int = Field(default=8, ge=5)
     S3_MULTIPART_CHUNK_SIZE_MB: int = Field(default=8, ge=5)
     S3_DOWNLOAD_CHUNK_SIZE_KB: int = Field(default=1024, ge=64, le=16384)

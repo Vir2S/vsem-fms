@@ -7,6 +7,7 @@ from vsem_fms.app.core.logging import logger
 from vsem_fms.app.middlewares.log_requests_middleware import log_requests_middleware
 from vsem_fms.app.middlewares.slash_trailing_middleware import trailing_slash_handler_middleware
 from vsem_fms.app.routes import delete, get_file, get_files_list, metadata, ping, upload
+from vsem_fms.app.storage.dependencies import storage_lifespan
 
 
 class Server:
@@ -17,6 +18,7 @@ class Server:
 
     def __create_server(self) -> FastAPI:
         server = FastAPI(
+            lifespan=storage_lifespan,
             title=settings.TITLE,
             docs_url=DOCS_URL,
             redoc_url=REDOC_URL,

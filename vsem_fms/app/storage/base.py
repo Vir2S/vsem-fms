@@ -19,6 +19,9 @@ class StorageDownload:
 class StorageBackend(ABC):
     """Storage contract consumed by the application service layer."""
 
+    async def aclose(self) -> None:
+        """Release resources owned by the backend, if any."""
+
     @abstractmethod
     async def save_file(
         self,

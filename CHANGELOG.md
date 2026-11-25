@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Reuse one S3 SDK client and configurable HTTP connection pool per API worker, and close owned clients during API and cleanup worker shutdown.
+
 ## [1.1.0] - 2026-09-02
 
 ### Added
